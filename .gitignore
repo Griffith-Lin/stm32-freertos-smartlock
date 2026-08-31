@@ -1,0 +1,53 @@
+# ===========================
+# Keil MDK 构建产物与临时文件
+# ===========================
+# 编译输出目录（最重要）
+Objects/
+Listings/
+RTE/
+
+# 调试与备份文件
+*.bak
+*.dep
+*.d
+*.crf
+*.o
+*.htm
+*.axf
+*.elf
+*.hex
+*.bin
+*.map
+*.lst
+*.lnp
+
+# Keil 用户特定配置（绝对不要上传）
+# 包含个人调试断点、窗口布局、本地路径等
+*.uvguix.*
+*.uvoptx
+JLinkLog.txt
+JLinkSettings.ini
+EventRecorderStub.txt
+
+# UV4 自动生成的临时文件
+*.tmp
+*.scvd
+
+# ===========================
+# IDE 与系统垃圾文件
+# ===========================
+.vscode/      # 若混用VSCode编辑
+.idea/        # 若混用CLion/IntelliJ
+Thumbs.db     # Windows缩略图缓存
+.DS_Store     # macOS系统文件
+*.swp         # Vim临时文件
+
+# ===========================
+# 第三方库/中间件（视情况而定）
+# ===========================
+# 如果通过Pack Installer安装且团队统一环境，可忽略CMSIS等标准库
+# 如果是自定义移植的驱动/HAL库，建议保留或作为子模块管理
+# Middleware/
+# Drivers/
+/project/Listings
+/project/Objects
