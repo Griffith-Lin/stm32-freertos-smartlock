@@ -1,0 +1,106 @@
+[2026-09-01 17:03:46]	[info] incremental build: 46 source files changed
+These source files will be recompiled
+---
+'g:\github\train2\api\led.c': object (.o) file not exist
+'g:\github\train2\api\usart1.c': object (.o) file not exist
+'g:\github\train2\lib\src\misc.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_adc.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_can.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_cec.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_crc.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_cryp.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_cryp_aes.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_cryp_des.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_cryp_tdes.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_dac.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_dbgmcu.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_dcmi.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_dfsdm.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_dma.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_dma2d.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_dsi.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_exti.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_flash.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_flash_ramfunc.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_gpio.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_hash.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_hash_md5.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_hash_sha1.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_i2c.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_iwdg.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_lptim.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_ltdc.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_pwr.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_qspi.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_rcc.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_rng.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_rtc.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_sai.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_sdio.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_spdifrx.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_spi.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_syscfg.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_tim.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_usart.c': object (.o) file not exist
+'g:\github\train2\lib\src\stm32f4xx_wwdg.c': object (.o) file not exist
+'g:\github\train2\startup\startup_stm32f401xx.s': object (.o) file not exist
+'g:\github\train2\user\main.c': object (.o) file not exist
+'g:\github\train2\user\stm32f4xx_it.c': object (.o) file not exist
+'g:\github\train2\user\system_stm32f4xx.c': object (.o) file not exist
+
+[2026-09-01 17:03:48]	[done]
+	build successfully !
+
+[2026-09-01 17:46:38]	[info] incremental build: 46 source files changed
+These source files will be recompiled
+---
+'g:\github\train2\api\led.c': compiler options has been changed.
+'g:\github\train2\api\usart1.c': compiler options has been changed.
+'g:\github\train2\lib\src\misc.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_adc.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_can.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_cec.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_crc.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_cryp.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_cryp_aes.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_cryp_des.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_cryp_tdes.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_dac.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_dbgmcu.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_dcmi.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_dfsdm.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_dma.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_dma2d.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_dsi.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_exti.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_flash.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_flash_ramfunc.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_gpio.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_hash.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_hash_md5.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_hash_sha1.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_i2c.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_iwdg.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_lptim.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_ltdc.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_pwr.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_qspi.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_rcc.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_rng.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_rtc.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_sai.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_sdio.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_spdifrx.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_spi.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_syscfg.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_tim.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_usart.c': compiler options has been changed.
+'g:\github\train2\lib\src\stm32f4xx_wwdg.c': compiler options has been changed.
+'g:\github\train2\startup\startup_stm32f401xx.s': compiler options has been changed.
+'g:\github\train2\user\main.c': source file has been changed.
+'g:\github\train2\user\stm32f4xx_it.c': compiler options has been changed.
+'g:\github\train2\user\system_stm32f4xx.c': compiler options has been changed.
+
+[2026-09-01 17:46:41]	[done]
+	build successfully !
+

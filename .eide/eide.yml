@@ -1,0 +1,217 @@
+version: "4.1"
+name: project
+type: ARM
+deviceName: null
+packDir: null
+srcDirs: []
+virtualFolder:
+  name: <virtual_root>
+  files: []
+  folders:
+    - name: user
+      files:
+        - path: user/main.c
+        - path: user/main.h
+      folders: []
+    - name: api
+      files:
+        - path: user/stm32f4xx_it.c
+        - path: user/system_stm32f4xx.c
+        - path: user/stm32f4xx_conf.h
+        - path: api/led.c
+        - path: api/led.h
+        - path: api/usart1.c
+        - path: api/usart1.h
+      folders: []
+    - name: startup
+      files:
+        - path: startup/startup_stm32f401xx.s
+      folders: []
+    - name: lib
+      files:
+        - path: lib/src/stm32f4xx_adc.c
+        - path: lib/src/stm32f4xx_can.c
+        - path: lib/src/stm32f4xx_cec.c
+        - path: lib/src/stm32f4xx_crc.c
+        - path: lib/src/stm32f4xx_cryp.c
+        - path: lib/src/stm32f4xx_cryp_aes.c
+        - path: lib/src/stm32f4xx_cryp_des.c
+        - path: lib/src/stm32f4xx_cryp_tdes.c
+        - path: lib/src/stm32f4xx_dac.c
+        - path: lib/src/stm32f4xx_dbgmcu.c
+        - path: lib/src/stm32f4xx_dcmi.c
+        - path: lib/src/stm32f4xx_dfsdm.c
+        - path: lib/src/stm32f4xx_dma.c
+        - path: lib/src/stm32f4xx_dma2d.c
+        - path: lib/src/stm32f4xx_dsi.c
+        - path: lib/src/stm32f4xx_exti.c
+        - path: lib/src/stm32f4xx_flash.c
+        - path: lib/src/stm32f4xx_flash_ramfunc.c
+        - path: lib/src/stm32f4xx_gpio.c
+        - path: lib/src/stm32f4xx_hash.c
+        - path: lib/src/stm32f4xx_hash_md5.c
+        - path: lib/src/stm32f4xx_hash_sha1.c
+        - path: lib/src/stm32f4xx_i2c.c
+        - path: lib/src/stm32f4xx_iwdg.c
+        - path: lib/src/stm32f4xx_lptim.c
+        - path: lib/src/stm32f4xx_ltdc.c
+        - path: lib/src/stm32f4xx_pwr.c
+        - path: lib/src/stm32f4xx_qspi.c
+        - path: lib/src/stm32f4xx_rcc.c
+        - path: lib/src/stm32f4xx_rng.c
+        - path: lib/src/stm32f4xx_rtc.c
+        - path: lib/src/stm32f4xx_sai.c
+        - path: lib/src/stm32f4xx_sdio.c
+        - path: lib/src/stm32f4xx_spdifrx.c
+        - path: lib/src/stm32f4xx_spi.c
+        - path: lib/src/stm32f4xx_syscfg.c
+        - path: lib/src/stm32f4xx_tim.c
+        - path: lib/src/stm32f4xx_usart.c
+        - path: lib/src/stm32f4xx_wwdg.c
+        - path: lib/src/misc.c
+      folders: []
+    - name: ::CMSIS
+      files: []
+      folders: []
+dependenceList: []
+outDir: build
+miscInfo:
+  uid: ae040f86c7ef32170f8d6d77ee3f1c94
+targets:
+  Target 1:
+    cppPreprocessAttrs:
+      defineList:
+        - STM32F401xx
+        - USE_STDPERIPH_DRIVER
+      incList:
+        - api
+        - startup
+        - user
+        - lib/inc
+        - .cmsis/include
+        - RTE/_Target 1
+        - CMSIS
+      libList: []
+    excludeList: []
+    settings:
+      debugger: cortex-debug
+    toolchain: AC5
+    toolchainConfigMap:
+      AC5:
+        archExtensions: ""
+        cpuType: Cortex-M4
+        floatingPointHardware: single
+        options:
+          version: 4
+          afterBuildTasks: []
+          asm-compiler:
+            defines: []
+          beforeBuildTasks: []
+          c/cpp-compiler:
+            CXX_FLAGS: --diag_suppress=1 --diag_suppress=1295
+            C_FLAGS: --diag_suppress=1 --diag_suppress=1295
+            c99-mode: true
+            one-elf-section-per-function: true
+            optimization: level-0
+            warnings: all-warnings
+          global:
+            output-debug-info: enable
+            use-microLIB: true
+          linker:
+            $outputTaskExcludes:
+              - .bin
+            output-format: elf
+            ro-base: "0x08000000"
+            rw-base: "0x20000000"
+            xo-base: ""
+        scatterFilePath: ""
+        storageLayout:
+          RAM:
+            - id: 1
+              isChecked: false
+              mem:
+                size: "0x0"
+                startAddr: "0x0"
+              noInit: false
+              tag: RAM
+            - id: 2
+              isChecked: false
+              mem:
+                size: "0x0"
+                startAddr: "0x0"
+              noInit: false
+              tag: RAM
+            - id: 3
+              isChecked: false
+              mem:
+                size: "0x0"
+                startAddr: "0x0"
+              noInit: false
+              tag: RAM
+            - id: 1
+              isChecked: true
+              mem:
+                size: "0x18000"
+                startAddr: "0x20000000"
+              noInit: false
+              tag: IRAM
+            - id: 2
+              isChecked: false
+              mem:
+                size: "0x0"
+                startAddr: "0x0"
+              noInit: false
+              tag: IRAM
+          ROM:
+            - id: 1
+              isChecked: false
+              isStartup: false
+              mem:
+                size: "0x0"
+                startAddr: "0x0"
+              tag: ROM
+            - id: 2
+              isChecked: false
+              isStartup: false
+              mem:
+                size: "0x0"
+                startAddr: "0x0"
+              tag: ROM
+            - id: 3
+              isChecked: false
+              isStartup: false
+              mem:
+                size: "0x0"
+                startAddr: "0x0"
+              tag: ROM
+            - id: 1
+              isChecked: true
+              isStartup: true
+              mem:
+                size: "0x80000"
+                startAddr: "0x8000000"
+              tag: IROM
+            - id: 2
+              isChecked: false
+              isStartup: false
+              mem:
+                size: "0x0"
+                startAddr: "0x0"
+              tag: IROM
+        useCustomScatterFile: false
+    uploadConfigMap:
+      JLink:
+        baseAddr: ""
+        bin: ""
+        cpuInfo:
+          cpuName: "null"
+          vendor: "null"
+        otherCmds: ""
+        proType: 1
+        speed: 8000
+      OpenOCD:
+        baseAddr: "0x08000000"
+        bin: ""
+        interface: cmsis-dap
+        target: stm32f4x
+    uploader: OpenOCD
