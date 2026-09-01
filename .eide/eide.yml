@@ -29,6 +29,8 @@ virtualFolder:
         - path: api/delay.h
         - path: api/tim.c
         - path: api/tim.h
+        - path: api/w25qxx.c
+        - path: api/w25qxx.h
       folders: []
     - name: startup
       files:

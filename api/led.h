@@ -3,6 +3,9 @@
 
 #include "stm32f4xx.h"
 
+#define LED_RED   GPIO_ResetBits(GPIOB, GPIO_Pin_8); // 红灯
+#define LED_GREEN GPIO_ResetBits(GPIOB, GPIO_Pin_9); // 绿灯
+
 void led_ini(void);
 
 #endif
