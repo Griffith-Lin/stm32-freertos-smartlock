@@ -104,3 +104,126 @@ These source files will be recompiled
 [2026-09-01 17:46:41]	[done]
 	build successfully !
 
+[2026-09-01 21:41:58]	[info] incremental build: 3 source files changed
+These source files will be recompiled
+---
+'g:\github\train2\api\L9110S.c': object (.o) file not exist
+'g:\github\train2\user\main.c': source file has been changed.
+'g:\github\train2\user\stm32f4xx_it.c': dependence 'g:\github\train2\user\main.h' has been changed.
+
+[2026-09-01 21:41:59]	[done]
+	build successfully !
+
+[2026-09-01 22:22:44]	[info] incremental build: 5 source files changed
+These source files will be recompiled
+---
+'g:\github\train2\api\L9110S.c': source file has been changed.
+'g:\github\train2\api\delay.c': object (.o) file not exist
+'g:\github\train2\api\tim.c': object (.o) file not exist
+'g:\github\train2\user\main.c': source file has been changed.
+'g:\github\train2\user\stm32f4xx_it.c': dependence 'g:\github\train2\user\main.h' has been changed.
+
+[2026-09-01 22:22:45]	compilation failed at : "g:\github\train2\api\tim.c", exit code: 1
+command: 
+  "D:\keil5core\ARM\ARMCC\bin\armcc.exe" -c --apcs=interwork -Iapi -Istartup -Iuser -Ilib/inc -I.cmsis/include -I"RTE/_Target 1" -ICMSIS -D"STM32F401xx" -D"USE_STDPERIPH_DRIVER" --cpu Cortex-M4.fp --li --c99 -D__MICROLIB -O0 --split_sections --diag_suppress=1 --diag_suppress=1295 -g -o ".\build\Target 1\.obj\api\tim.o" --no_depend_system_headers --depend ".\build\Target 1\.obj\api\tim.d" .\api\tim.c
+   at unify_builder.Program.Main(String[] args_)
+---
+"user\stm32f4xx.h", line 11581: Warning:  #47-D: incompatible redefinition of macro "DBGMCU_APB2_FZ_DBG_TIM1_STOP"  (declared at line 11574)
+  #define  DBGMCU_APB2_FZ_DBG_TIM1_STOP        DBGMCU_APB1_FZ_DBG_TIM1_STOP    
+           ^
+"user\stm32f4xx.h", line 11582: Warning:  #47-D: incompatible redefinition of macro "DBGMCU_APB2_FZ_DBG_TIM8_STOP"  (declared at line 11575)
+  #define  DBGMCU_APB2_FZ_DBG_TIM8_STOP        DBGMCU_APB1_FZ_DBG_TIM8_STOP
+           ^
+"user\stm32f4xx.h", line 11583: Warning:  #47-D: incompatible redefinition of macro "DBGMCU_APB2_FZ_DBG_TIM9_STOP"  (declared at line 11576)
+  #define  DBGMCU_APB2_FZ_DBG_TIM9_STOP        DBGMCU_APB1_FZ_DBG_TIM9_STOP
+           ^
+"user\stm32f4xx.h", line 11584: Warning:  #47-D: incompatible redefinition of macro "DBGMCU_APB2_FZ_DBG_TIM10_STOP"  (declared at line 11577)
+  #define  DBGMCU_APB2_FZ_DBG_TIM10_STOP       DBGMCU_APB1_FZ_DBG_TIM10_STOP
+           ^
+"user\stm32f4xx.h", line 11585: Warning:  #47-D: incompatible redefinition of macro "DBGMCU_APB2_FZ_DBG_TIM11_STOP"  (declared at line 11578)
+  #define  DBGMCU_APB2_FZ_DBG_TIM11_STOP       DBGMCU_APB1_FZ_DBG_TIM11_STOP
+           ^
+".\api\tim.h", line 7: Error:  #5: cannot open source input file "wavplay.h": No such file or directory
+  #include "wavplay.h"
+                      ^
+.\api\tim.c: 5 warnings, 1 error
+
+[2026-09-01 22:23:03]	[info] incremental build: 3 source files changed
+These source files will be recompiled
+---
+'g:\github\train2\api\tim.c': object (.o) file not exist
+'g:\github\train2\user\main.c': source file has been changed.
+'g:\github\train2\user\stm32f4xx_it.c': dependence 'g:\github\train2\user\main.h' has been changed.
+
+[2026-09-01 22:23:04]	[done]
+	build successfully !
+
+[2026-09-01 22:23:44]	[done]
+	build successfully !
+
+[2026-09-01 22:23:53]	[info] incremental build: 1 source files changed
+These source files will be recompiled
+---
+'g:\github\train2\user\main.c': source file has been changed.
+
+[2026-09-01 22:23:53]	[done]
+	build successfully !
+
+[2026-09-01 22:24:18]	[done]
+	build successfully !
+
+[2026-09-01 22:24:38]	[info] incremental build: 2 source files changed
+These source files will be recompiled
+---
+'g:\github\train2\user\main.c': dependence 'g:\github\train2\user\main.h' has been changed.
+'g:\github\train2\user\stm32f4xx_it.c': dependence 'g:\github\train2\user\main.h' has been changed.
+
+[2026-09-01 22:24:39]	[done]
+	build successfully !
+
+[2026-09-01 22:50:23]	[info] incremental build: 1 source files changed
+These source files will be recompiled
+---
+'g:\github\train2\api\tim.c': source file has been changed.
+
+[2026-09-01 22:50:23]	compilation failed at : "g:\github\train2\api\tim.c", exit code: 1
+command: 
+  "D:\keil5core\ARM\ARMCC\bin\armcc.exe" -c --apcs=interwork -Iapi -Istartup -Iuser -Ilib/inc -I.cmsis/include -I"RTE/_Target 1" -ICMSIS -D"STM32F401xx" -D"USE_STDPERIPH_DRIVER" --cpu Cortex-M4.fp --li --c99 -D__MICROLIB -O0 --split_sections --diag_suppress=1 --diag_suppress=1295 -g -o ".\build\Target 1\.obj\api\tim.o" --no_depend_system_headers --depend ".\build\Target 1\.obj\api\tim.d" .\api\tim.c
+   at unify_builder.Program.Main(String[] args_)
+---
+"user\stm32f4xx.h", line 11581: Warning:  #47-D: incompatible redefinition of macro "DBGMCU_APB2_FZ_DBG_TIM1_STOP"  (declared at line 11574)
+  #define  DBGMCU_APB2_FZ_DBG_TIM1_STOP        DBGMCU_APB1_FZ_DBG_TIM1_STOP    
+           ^
+"user\stm32f4xx.h", line 11582: Warning:  #47-D: incompatible redefinition of macro "DBGMCU_APB2_FZ_DBG_TIM8_STOP"  (declared at line 11575)
+  #define  DBGMCU_APB2_FZ_DBG_TIM8_STOP        DBGMCU_APB1_FZ_DBG_TIM8_STOP
+           ^
+"user\stm32f4xx.h", line 11583: Warning:  #47-D: incompatible redefinition of macro "DBGMCU_APB2_FZ_DBG_TIM9_STOP"  (declared at line 11576)
+  #define  DBGMCU_APB2_FZ_DBG_TIM9_STOP        DBGMCU_APB1_FZ_DBG_TIM9_STOP
+           ^
+"user\stm32f4xx.h", line 11584: Warning:  #47-D: incompatible redefinition of macro "DBGMCU_APB2_FZ_DBG_TIM10_STOP"  (declared at line 11577)
+  #define  DBGMCU_APB2_FZ_DBG_TIM10_STOP       DBGMCU_APB1_FZ_DBG_TIM10_STOP
+           ^
+"user\stm32f4xx.h", line 11585: Warning:  #47-D: incompatible redefinition of macro "DBGMCU_APB2_FZ_DBG_TIM11_STOP"  (declared at line 11578)
+  #define  DBGMCU_APB2_FZ_DBG_TIM11_STOP       DBGMCU_APB1_FZ_DBG_TIM11_STOP
+           ^
+".\api\tim.c", line 63: Error:  #20: identifier "tim10_tick_ms" is undefined
+      uint32_t start = tim10_tick_ms;
+                       ^
+.\api\tim.c: 5 warnings, 1 error
+
+[2026-09-01 22:51:31]	[info] incremental build: 1 source files changed
+These source files will be recompiled
+---
+'g:\github\train2\api\tim.c': source file has been changed.
+
+[2026-09-01 22:51:31]	[done]
+	build successfully !
+
+[2026-09-01 22:51:53]	[info] incremental build: 1 source files changed
+These source files will be recompiled
+---
+'g:\github\train2\user\main.c': source file has been changed.
+
+[2026-09-01 22:51:53]	[done]
+	build successfully !
+

@@ -15,14 +15,20 @@ int fputc(int c, FILE *stream)
 
 int main()
 {
+    NVIC_PriorityGroupConfig(NVIC_PriorityGroup_3);
+
+    TIM10_Task_Init(84,1000);
     usart1_ini(115200);
     led_ini();
+    L9110S_ini();
     
     
-    printf("111");
+
+    
     while(1)
     {
-        
+        printf("111\r\n");
+        TIM10_delay(1000);//1√Î
     }
 }
 

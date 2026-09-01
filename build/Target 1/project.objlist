@@ -1,4 +1,7 @@
+".\build\Target 1\.obj\api\L9110S.o"
+".\build\Target 1\.obj\api\delay.o"
 ".\build\Target 1\.obj\api\led.o"
+".\build\Target 1\.obj\api\tim.o"
 ".\build\Target 1\.obj\api\usart1.o"
 ".\build\Target 1\.obj\lib\src\misc.o"
 ".\build\Target 1\.obj\lib\src\stm32f4xx_adc.o"

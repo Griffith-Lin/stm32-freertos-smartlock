@@ -27,7 +27,10 @@
         "USE_STDPERIPH_DRIVER"
     ],
     "sourceList": [
+        "api/L9110S.c",
+        "api/delay.c",
         "api/led.c",
+        "api/tim.c",
         "api/usart1.c",
         "lib/src/misc.c",
         "lib/src/stm32f4xx_adc.c",
