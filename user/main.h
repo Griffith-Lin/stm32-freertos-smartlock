@@ -8,6 +8,9 @@
 #include "L9110S.h"
 #include "delay.h"
 #include "tim.h"
+#include "w25qxx.h"
+#include "spi.h"
+#include "key.h"
 
 #endif
 

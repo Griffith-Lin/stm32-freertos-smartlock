@@ -20,17 +20,15 @@ virtualFolder:
         - path: user/system_stm32f4xx.c
         - path: user/stm32f4xx_conf.h
         - path: api/led.c
-        - path: api/led.h
         - path: api/usart1.c
-        - path: api/usart1.h
         - path: api/L9110S.c
-        - path: api/L9110S.h
         - path: api/delay.c
-        - path: api/delay.h
         - path: api/tim.c
-        - path: api/tim.h
         - path: api/w25qxx.c
         - path: api/w25qxx.h
+        - path: api/spi.c
+        - path: api/key.c
+        - path: api/key.h
       folders: []
     - name: startup
       files:

@@ -21,18 +21,14 @@ int main()
     usart1_ini(115200);
     led_ini();
     L9110S_ini();
-    
-    
+    spi1_w25_ini();
+    key_ini();
 
     
     while(1)
     {
-        printf("111\r\n");
-        L9110S_move(MOTOR_FORWARD,300);
-        L9110S_move(MOTOR_BRAKE,1000);
-        L9110S_move(MOTOR_REVERSE,300);
-        L9110S_move(MOTOR_BRAKE,1000);
-        TIM10_delay(1000);//1√Î
+
+        
     }
 }
 
