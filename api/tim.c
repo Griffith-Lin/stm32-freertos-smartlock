@@ -82,15 +82,8 @@ void TIM10_delay(uint32_t ms)
 //     }
 // }
 
-//ISR 瘦身成纯节拍维护
-void TIM1_UP_TIM10_IRQHandler(void)
-{
-    if (TIM_GetITStatus(TIM10, TIM_IT_Update) == SET)
-    {
-        TIM_ClearITPendingBit(TIM10, TIM_IT_Update);
-        tim10_tick_ms++;
-    }
-}
+
+
 
 
 

@@ -6,6 +6,7 @@
 
 
 #include <stddef.h>
+extern volatile uint32_t tim10_tick_ms;
 
 void TIM10_delay(uint32_t ms);
 void TIM10_Task_Init(uint32_t psc,uint32_t arr);
