@@ -13,6 +13,8 @@ virtualFolder:
         - path: user/main.c
         - path: user/main.h
         - path: user/stm32f4xx.h
+        - path: user/system_stm32f4xx.c
+        - path: user/stm32f4xx_it.c
       folders: []
     - name: api
       files:
@@ -80,6 +82,28 @@ virtualFolder:
     - name: ::CMSIS
       files: []
       folders: []
+    - name: freertos
+      files:
+        - path: freertos/FreeRTOSConfig.h
+      folders:
+        - name: src
+          files:
+            - path: freertos/src/event_groups.c
+            - path: freertos/src/list.c
+            - path: freertos/src/queue.c
+            - path: freertos/src/stream_buffer.c
+            - path: freertos/src/tasks.c
+            - path: freertos/src/timers.c
+          folders: []
+        - name: port
+          files:
+            - path: freertos/port/port.c
+            - path: freertos/port/portmacro.h
+          folders: []
+        - name: heap
+          files:
+            - path: freertos/heap/heap_4.c
+          folders: []
 dependenceList: []
 outDir: build
 miscInfo:
@@ -98,6 +122,9 @@ targets:
         - .cmsis/include
         - RTE/_Target 1
         - CMSIS
+        - freertos
+        - freertos/include
+        - freertos/port
       libList: []
     excludeList: []
     settings:
