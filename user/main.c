@@ -57,12 +57,9 @@ void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
         ; /* 任务栈溢出（栈配小了或递归太深） */
 }
 
-/**
- * @brief LED 闪烁测试任务
- * @param arg 任务参数(未使用)
- * @return 无
- * @note 每 500ms 翻转一次红灯
- */
+
+
+
 static void led_task(void *arg)
 {
 
@@ -93,7 +90,7 @@ static void print_task2(void *arg)
     while (1)
     {
         printf("222\r\n");
-        vTaskDelayUntil(&lastWakeTime, 500);  // 固定在"上次 + 500ms"醒，不漂移
+        vTaskDelayUntil(&lastWakeTime, 1000);  // 固定在"上次 + 500ms"醒，不漂移
     }
 }
 
@@ -115,6 +112,14 @@ static void lcd_task(void *arg)
         vTaskDelay(500);
     }
 }
+
+
+void vApplicationIdleHook(void)   // FreeRTOS 空闲任务钩子函数,由 configUSE_IDLE_HOOK 使能
+{
+    LED_GREEN_toggle();           // 别忘了分号
+}
+
+
 /**
  * @brief 主函数:外设初始化后创建任务并启动 FreeRTOS 调度器
  * @return 无
@@ -139,16 +144,16 @@ int main()
     const char * const  pcName,        // ② 任务名字（仅调试用）
     configSTACK_DEPTH_TYPE usStackDepth, // ③ 栈深度（单位：字！）32位系统：1字 = 4字节（32位）
     void *              pvParameters,  // ④ 传给任务函数的参数
-    UBaseType_t         uxPriority,    // ⑤ 优先级
+    UBaseType_t         uxPriority,    // ⑤ 优先级，区分于stm32的NVIC优先级，FreeRTOS优先级数值越大，任务优先级越高
     TaskHandle_t *      pxCreatedTask  // ⑥ 任务句柄（输出参数）
     );
 
     */
     BaseType_t rc1 = xTaskCreate(led_task, "led_task", 128, NULL, 3, NULL);
 
-    BaseType_t rc2 = xTaskCreate(print_task1, "print_task1", 128, NULL, 1, NULL);
+    BaseType_t rc2 = xTaskCreate(print_task1, "print_task1", 128, NULL, 2, NULL);
 
-    BaseType_t rc3 = xTaskCreate(print_task2, "print_task2", 128, NULL, 1, NULL);
+    BaseType_t rc3 = xTaskCreate(print_task2, "print_task2", 128, NULL, 4, NULL);//优先级最高，防止在打印的时候，被别的任务抢走 CPU，导致打印的时间戳不准确
 
     BaseType_t rc4 = xTaskCreate(lcd_task, "lcd_task", 128, NULL, 2, NULL);
 
