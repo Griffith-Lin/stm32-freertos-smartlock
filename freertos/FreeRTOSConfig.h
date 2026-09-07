@@ -5,7 +5,7 @@
 
 /*---------------- 时间与节拍 ----------------*/
 #define configCPU_CLOCK_HZ              (84000000UL)
-    /* F401 主频 84MHz。若 SystemCoreClock 不是 84M 会不准——稍后教你怎么确认 */
+    /* F401 主频 84MHz。若 SystemCoreClock 不是 84M 会不准 */
 #define configTICK_RATE_HZ              (1000)
     /* 1ms 节拍，和你 TIM10 的节拍一致，心理模型无缝衔接 */
 #define configTICK_TYPE_WIDTH_IN_BITS   TICK_TYPE_WIDTH_32_BITS
