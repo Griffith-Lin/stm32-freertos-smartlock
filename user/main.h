@@ -14,6 +14,7 @@
 #include "w25qxx.h"
 #include "dma.h"
 #include "lcd.h"
+#include "debug.h"
 
 #endif
 
