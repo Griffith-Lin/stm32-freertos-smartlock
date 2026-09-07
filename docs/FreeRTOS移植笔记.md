@@ -1,178 +1,112 @@
-# STM32F401 FreeRTOS 移植全流程实录
+1. 首先明确：**大创（大学生创新创业训练计划）不是竞赛，而是立项类科研训练项目**，我们通常说的“参加大创”，指的是申报并立项大创项目，全程分为「申报立项 → 中期检查 → 结题验收」三个核心阶段，每个阶段需要准备的材料和侧重点不同。
 
-**环境**：STM32F401RETx · FreeRTOS-Kernel **V11.3.0**（LTS）· Keil **AC5**（eIDE 工程）· 84MHz
-**源码位置**：`D:\迅雷下载\FreeRTOS-LTS\FreeRTOS\FreeRTOS-Kernel`
-**移植目标**：LED 闪烁任务跑通，为后续把按键/电机/串口模块改成任务铺路
+   以下内容基于教育部《国家级大学生创新创业训练计划管理办法》官方要求，结合全国高校通用执行标准整理。
 
----
+   ## 一、申报立项阶段（最核心，决定能不能立项）
 
-## 第 0 步：移植前的分析（决定后面所有选择的三个事实）
+   这一阶段的目标是通过校/省/国家级评审，拿到项目立项资格，核心准备工作分为基础筹备、核心申报书、配套附件三部分。
 
-| 事实 | 结论 |
-|---|---|
-| 工具链是 **AC5**（armcc5） | 移植层必须选 `portable/RVDS/ARM_CM4F/`，不是 GCC |
-| 芯片是 **Cortex-M4F** | 需要带 FPU 的 ARM_CM4F 移植层 |
-| 启动文件 SVC/PendSV/SysTick 是**弱定义** | 用宏映射接管，不用改启动文件 |
+   ### （一）前期基础筹备（动笔写申报书前必须敲定）
 
-## 第 1 步：复制内核源码
+   1. 组队配置
 
-目标目录（`g:\github\train2\freertos\`）：
+      - 创新训练项目：可个人申报，也可2-5人组成团队，鼓励跨专业、跨年级搭配
+      - 创业训练/实践项目：必须3-5人团队，要求有明确角色分工（技术、市场、运营、财务等）
+      - 通用规则：同一批次每人只能主持1项大创，最多参与2项；建议负责人为大二/大三学生，大四毕业季通常无法全程完成结题，不建议担任负责人。
 
-```
-freertos\
-├── src\       ← tasks.c queue.c list.c timers.c event_groups.c stream_buffer.c
-├── include\   ← 内核整个 include 目录（FreeRTOS.h task.h queue.h ...）
-├── port\      ← portable\RVDS\ARM_CM4F\ 下的 port.c + portmacro.h
-├── heap\      ← portable\MemMang\heap_4.c
-└── FreeRTOSConfig.h  ← 自己创建（第 2 步）
-```
+   2. 确定指导教师
 
-复制命令（Git Bash）：
+      - 基础要求：1-2名校内指导教师；创业实践项目需额外配备1名企业导师（官方要求双导师制）
+      - 选型建议：优先选择有在研课题、有大创指导经验、时间充裕的老师；导师研究方向与选题匹配度越高，立项概率越高。
+      - 流程：提前联系导师确认指导意愿，共同沟通选题方向，后续申报书、中期、结题材料均需导师审核签字。
 
-```bash
-K="/d/迅雷下载/FreeRTOS-LTS/FreeRTOS/FreeRTOS-Kernel"
-mkdir -p /g/github/train2/freertos/{src,include,port,heap}
-cp $K/tasks.c $K/queue.c $K/list.c $K/timers.c $K/event_groups.c $K/stream_buffer.c /g/github/train2/freertos/src/
-cp $K/include/*.h /g/github/train2/freertos/include/
-cp $K/portable/RVDS/ARM_CM4F/port.c $K/portable/RVDS/ARM_CM4F/portmacro.h /g/github/train2/freertos/port/
-cp $K/portable/MemMang/heap_4.c /g/github/train2/freertos/heap/
-```
+   3. 敲定选题（立项通过的核心前提）
 
-不复制 croutine.c（协作式任务，用不到）。堆管理选 **heap_4**（支持 free + 碎片合并，最常用）。
+       选题核心原则：
 
-## 第 2 步：FreeRTOSConfig.h 最终版（每个坑都在这）
+      小切口、可落地、本科生1-2年能完成、有明确预期产出
 
-```c
-#ifndef FREERTOS_CONFIG_H
-#define FREERTOS_CONFIG_H
+      ，切忌大而空泛。
 
-/*---------------- 时间与节拍 ----------------*/
-#define configCPU_CLOCK_HZ              (84000000UL)   /* F401 主频 */
-#define configTICK_RATE_HZ              (1000)         /* 1ms 节拍，与 TIM10 一致 */
-#define configTICK_TYPE_WIDTH_IN_BITS   TICK_TYPE_WIDTH_32_BITS
-    /* V11 强制要求，替代旧版 configUSE_16_BIT_TICKS（两者同定义反而报错） */
+      - 创新训练类：优先从导师现有课题中拆分子课题；或聚焦具体社会问题调研、小技术改进、软件开发、数据分析类题目。
+      - 创业训练类：聚焦细分领域的真实痛点，有自洽的解决方案，不要求真实落地，但商业逻辑要完整。
+      - 避坑提示：不要选“人工智能发展研究”“乡村振兴研究”这类宏观题目，要缩小到具体场景，例如“XX市老旧小区适老化改造的现状调研与优化路径”。
 
-/*---------------- 任务与内存 ----------------*/
-#define INCLUDE_vTaskDelay              1        /* 坑：不定义则 vTaskDelay 不编译，链接报 undefined */
-#define configUSE_PREEMPTION            1        /* 坑：无默认值，缺失直接 #error */
-#define configMAX_PRIORITIES            (5)
-#define configMINIMAL_STACK_SIZE        (128)    /* 单位是"字"(4字节) */
-#define configTOTAL_HEAP_SIZE           (8 * 1024)
-#define configMAX_TASK_NAME_LEN         (12)
-#define configIDLE_SHOULD_YIELD         1
-#define configUSE_MUTEXES               1
-#define configUSE_RECURSIVE_MUTEXES     1
-#define configUSE_COUNTING_SEMAPHORES   1
-#define configQUEUE_REGISTRY_SIZE       8
+   ### （二）核心材料：《大创项目申报书》
 
-/*---------------- 软件定时器 ----------------*/
-#define configUSE_TIMERS                1
-#define configTIMER_TASK_PRIORITY       (2)
-#define configTIMER_QUEUE_LENGTH        (10)
-#define configTIMER_TASK_STACK_DEPTH    (128)
+   这是评审打分的核心依据，全国无统一模板，但各校结构高度一致，核心模块如下：
 
-/*---------------- 钩子与调试 ----------------*/
-#define configUSE_IDLE_HOOK             0
-#define configUSE_TICK_HOOK             0
-#define configUSE_MALLOC_FAILED_HOOK    1    /* 开了必须实现 vApplicationMallocFailedHook */
-#define configCHECK_FOR_STACK_OVERFLOW  2    /* 开了必须实现 vApplicationStackOverflowHook */
+   1. **项目基本信息** 项目名称、项目类型（创新/创业训练/创业实践）、申报级别、团队成员、指导教师、项目周期等，准确填写即可。
+   2. **项目摘要** 200-500字浓缩项目核心：研究背景、待解决的问题、研究方法、核心创新点、预期成果，是评委的第一判断依据，必须精炼清晰。
+   3. 研究背景与研究意义
+      - 背景：梳理行业现状、现存问题、现有研究的不足，引出项目的必要性
+      - 意义：分理论意义和实际应用价值，说明项目完成后能产出的价值
+   4. 研究内容与实施方案（申报书主体）
+      - 拆解为2-3个核心研究模块，每个模块对应明确的研究方法（文献研究、问卷调查、实验、仿真模拟等）
+      - 建议搭配**技术路线图**，可视化展示从选题到结题的全流程步骤，直观加分
+   5. **项目创新点** 提炼2-3个具体的核心创新点即可，避免“填补空白”这类夸大表述，可以是研究视角创新、方法创新、应用场景创新、技术改进创新等。
+   6. 预期成果与考核指标
+      - 必须**具体、可量化**，既是评审判断可行性的关键，也是后期结题的验收标准
+      - 创新训练常见成果：1份研究报告、1篇学术论文、1份调研报告、1个软件原型/实用新型专利/软件著作权等
+      - 创业训练常见成果：1份完整商业计划书、1份市场调研报告、1个产品原型等
+      - 注意：预期成果不要定过高，满足结题要求即可，定太高后期完不成会直接影响结题。
+   7. 进度安排与人员分工
+      - 按学期/季度拆分任务，明确每个阶段的具体产出
+      - 落实到每个成员的具体职责，体现团队分工合理性
+   8. 经费预算
+      - 按学校给定科目填写，常见科目：材料费、测试化验费、调研差旅费、打印资料费等
+      - 金额对应申报级别（校级数千元、省级约1万元、国家级约2万元），预算要符合学校报销规定，合理合规。
+   9. 团队与导师意见
+      - 团队介绍：突出成员专业、经历与项目的匹配度
+      - 导师意见：导师签字确认，说明对项目的评价与指导意愿，部分学校还需学院审核盖章。
 
-#define configASSERT(x)  if ((x) == 0) { taskDISABLE_INTERRUPTS(); for (;;); }
+   ### （三）配套附件材料
 
-/*---------------- 中断优先级 ----------------*/
-#define configPRIO_BITS                 4
-#define configKERNEL_INTERRUPT_PRIORITY         (255)
-#define configMAX_SYSCALL_INTERRUPT_PRIORITY    ( 0xB0 )
-    /* 坑：F401 只有 4 位优先级，此值必须是 16 的倍数。
-       191(0xBF) 的低 4 位非零，xPortStartScheduler 里的断言死循环 */
+   非所有学校强制要求，但有则大幅提升竞争力：
 
-/*---------------- 启动文件符号映射（V11 命名！）----------------*/
-#define vPortSVCHandler       SVC_Handler
-#define vPortPendSVHandler    PendSV_Handler     /* 旧版名字，V11 已不用 */
-#define vPortSysTickHandler   SysTick_Handler    /* 旧版名字，V11 已不用 */
-#define xPortPendSVHandler    PendSV_Handler     /* 坑：V11 把 PendSV/SysTick 改名为 xPort* */
-#define xPortSysTickHandler   SysTick_Handler
+   - 前期成果：相关课程论文、竞赛获奖、专利/软著、调研数据、原型Demo等
+   - 支撑证明：合作单位意向书、调研场地证明、导师课题支撑证明等
+   - 核心参考文献列表，体现研究基础
 
-#endif
-```
+   ## 二、立项答辩阶段（部分高校评审环节）
 
-## 第 3 步：eIDE 工程集成
+   部分学校在校级/省级评审中设置现场答辩，一般为5-8分钟汇报+3-5分钟评委提问，需准备：
 
-- 8 个 `.c` 全部加入工程（src 6 + port.c + heap_4.c）
-- 头文件路径加三个：`freertos`、`freertos/include`、`freertos/port`
-- 手工改的话编辑 `.eide/eide.yml`：虚拟文件夹加 freertos 组，`incList` 加三个路径
+   1. **立项答辩PPT**：10-15页，核心讲清“为什么做、做什么、怎么做、创新点、预期成果、团队基础”，不要直接复制申报书文字。
+   2. **答辩逐字稿**：严格控制时长，超时通常会被直接打断。
+   3. **高频问题预判**：选题的创新性在哪？本科生能否按期完成？预期成果是否可行？经费预算是否合理？ 建议提前和导师沟通，邀请导师把关PPT和答辩逻辑。
 
-## 第 4 步：main.c 改造
+   ## 三、中期检查阶段（决定项目能否继续执行）
 
-```c
-#include "FreeRTOS.h"
-#include "task.h"
+   立项成功后并非万事大吉，中期检查不通过会被终止项目、追回经费。需准备：
 
-void vApplicationMallocFailedHook(void)      /* 配置里开了钩子开关就必须实现 */
-{
-    for (;;);
-}
+   1. **中期检查报告**：详细汇报已完成的研究内容、阶段性成果、遇到的问题与解决方案、下一步计划、经费使用情况。
+   2. **佐证材料**：实验记录、问卷原始数据、论文初稿、调研照片、工作记录等，证明项目真实推进。
+   3. **中期答辩PPT**（需答辩的学校）：重点展示“已经做完了什么”，而非“要做什么”，突出阶段性产出。
 
-void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
-{
-    for (;;);
-}
+   ## 四、结题验收阶段（决定项目是否有效）
 
-static void led_task(void *arg)
-{
-    while (1)
-    {
-        LED_RED_toggle();
-        vTaskDelay(500);      /* 任务延时：让出 CPU，而非忙等 */
-    }
-}
+   **只有通过结题验收，大创经历才算完整有效，综测、保研加分才会被认可**。需准备全套结题材料：
 
-int main()
-{
-    NVIC_PriorityGroupConfig(NVIC_PriorityGroup_4);   /* 必须 Group_4，4 位全抢占 */
-    /* ...原有外设初始化不变... */
-    xTaskCreate(led_task, "led", 128, NULL, 1, NULL);
-    vTaskStartScheduler();    /* 永不返回 */
-    for (;;);
-}
-```
+   1. **结题报告**：项目完整总结，对应申报书的研究内容逐一说明完成情况，核心包括研究成果、数据结论、创新点总结、应用价值、经费决算。
 
-## 第 5 步：踩坑全记录（按排查顺序，共 6 个）
+   2. 全部成果证明材料
 
-| # | 现象 | 根因 | 修复 |
-|---|---|---|---|
-| 1 | `#error Missing definition: configUSE_PREEMPTION` | 模板漏了该配置（无默认值） | 补 `#define configUSE_PREEMPTION 1` |
-| 2 | `L6200E: Symbol SVC_Handler multiply defined (stm32f4xx_it.o and port.o)` | 标准库模板 it.c 里三个空 handler 是强定义，与移植层冲突 | 注释掉 it.c 的 SVC/PendSV/SysTick 三个空函数 |
-| 3 | `L6218E: vApplicationMallocFailedHook / vApplicationStackOverflowHook / vTaskDelay undefined` | 前两个：开关开了但 hook 函数没实现；vTaskDelay：`INCLUDE_vTaskDelay` 没开，函数被编译期裁剪 | main.c 里实现两个 hook；配置里开 `INCLUDE_vTaskDelay` |
-| 4 | 编译链接全过，串口卡在 `create rc=1`，无任何输出 | `configMAX_SYSCALL_INTERRUPT_PRIORITY=191(0xBF)` 低 4 位非零，**port.c:365 断言死循环**（F401 优先级只实现 4 位 0xF0） | 改成 `0xB0`（176），16 的倍数 |
-| 5 | 同上现象，全量重编后依旧 | 见 #6 的真正根因 | — |
-| 6 | 同上现象（最终根因） | **V11 把 PendSV/SysTick 处理器改名为 `xPortPendSVHandler`/`xPortSysTickHandler`**，旧宏映射对不上；加上函数级裁剪（`one-elf-section-per-function`），链接器静默丢弃移植层、向量表回退到启动文件的 `B .` 空壳 → 第一个 SysTick 中断死循环 | 补 `xPort*` 两个宏映射 |
+      ：
 
-## 第 6 步：定位问题的方法（以后复用）
+      - 论文：见刊通知/录用函/全文
+      - 专利/软著：授权证书/受理通知书
+      - 调研报告、研究报告、产品原型、软件系统等
+      - 所有成果必须与申报时的预期成果对应，缺项会影响结题评级。
 
-1. **串口探针二分法**：在 main 的每个关键节点打印（`before sched` / `create rc` / `sched returned` / `led task run`），一次编译就能把死点压缩到一个函数内
-2. **map 文件照妖镜**：`build/Target 1/project.map` 里查符号定义归属：
+   3. **结题答辩PPT**（需答辩的学校）：核心逻辑为「做了什么→怎么做的→得到了什么成果→有什么价值→反思与展望」。
 
-```bash
-grep "PendSV_Handler\|SysTick_Handler" "build/Target 1/project.map"
-```
+   4. 其他：经费决算表、项目变更说明（如有）、导师验收意见等。
 
-   - 定义在 `port.o` → 移植层接管 ✓
-   - 定义在 `startup_stm32f401xx.o(.text)` 且只有 2 字节 → 弱空壳，映射失败 ✗
-3. **调试器看 PC**：PC 停在哪决定问题类型（configASSERT 循环 / HardFault_Handler / Default_Handler / 任务代码）
+   ## 五、核心避坑提示
 
-## 第 7 步：移植完成后的铁律（模块改造前必读）
+   1. 大创材料的核心逻辑是**可行性优先**：和创新创业大赛看重成果价值不同，大创评审更关注“本科生能不能做完、方案合不合理”，不要过度夸大。
+   2. 全程留痕：所有实验、调研、讨论都要保留原始记录，中期、结题均需佐证材料。
+   3. 保持和导师的沟通：申报书、中期、结题材料都要提前给导师审核修改，不要写完直接提交。
 
-1. **任务里禁止用 `TIM10_delay` 忙等** → 一律换 `vTaskDelay()`
-2. **中断优先级规则**：优先级数值 ≥ 11（0xB0 语义）的中断才能调 `FromISR` API。TIM10（优先级 1）和 EXTI（3）都不能调——按键事件要放到任务里消费
-3. **ISR 职责**：清标志 + 置事件/发信号量，业务逻辑放任务
-4. **共享变量**：跨任务/跨 ISR 的变量要么用队列/互斥量，要么临界区
-5. **新用 API 前查开关**：`INCLUDE_vTaskDelete`、`INCLUDE_xTaskDelayUntil` 等默认关闭，用了先开
-6. **改头文件后必须全量重编**：armcc5 不总是跟踪头文件依赖，只改配置不重编 = 烧旧固件（坑 #4 的教训）
-
-## 第 8 步：后续模块移植路线
-
-1. 按键状态机从 TIM10 中断挪出 → 做成按键任务（事件用队列发给主控）
-2. L9110S 电机控制 → 任务 + `vTaskDelay` 替代 `TIM10_move` 忙等
-3. 串口打印 → 多任务打印用互斥量保护，或改成发送队列
-4. 定时任务（LED/轮询）→ 软件定时器或 `vTaskDelayUntil` 精确定时
+   
