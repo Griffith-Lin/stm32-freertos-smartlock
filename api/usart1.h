@@ -4,7 +4,7 @@
 #include "stm32f4xx.h"
 
 
-void usart1_ini(uint32_t brr);
+void usart1_Config(uint32_t brr);
 
 #endif
 

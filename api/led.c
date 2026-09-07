@@ -1,7 +1,7 @@
 #include "led.h"
 
 // pb8 pb9  io口电压为高时，熄灭
-void led_ini(void)
+void led_Config(void)
 {
     RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOB, ENABLE);
 

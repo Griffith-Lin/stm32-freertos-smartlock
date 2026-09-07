@@ -3,7 +3,7 @@
 #include "usart1.h"
 
 
-void usart1_ini(uint32_t brr)
+void usart1_Config(uint32_t brr)
 {
     RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOA,ENABLE);
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART1,ENABLE);

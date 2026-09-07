@@ -4,7 +4,7 @@
 /*---------spi通信（硬件实现）----------*/
 
 
-void spi1_w25_ini(void)
+void spi1_w25_Config(void)
 {
     
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_SPI1,ENABLE);

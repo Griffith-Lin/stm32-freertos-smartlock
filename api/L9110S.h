@@ -16,6 +16,6 @@ void L9110S_control(L9110S_Mode_t mode);
 void L9110S_move(L9110S_Mode_t mode, uint32_t ms);   // 定时动作
 
 
-void L9110S_ini(void);
+void L9110S_Config(void);
 #endif
 

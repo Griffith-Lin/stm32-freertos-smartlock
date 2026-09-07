@@ -4,7 +4,7 @@ volatile Key_t keys[3] = {0};
 
 
 //pc13 key2 输入模式，当出现从高到低电平的跳变时，触发中断
-void key_ini(void)
+void key_Config(void)
 {
     RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
 

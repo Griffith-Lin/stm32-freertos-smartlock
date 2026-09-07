@@ -4,7 +4,7 @@
 #include "stm32f4xx.h"
 #include "bitband.h"
 
-void spi1_w25_ini(void);
+void spi1_w25_Config(void);
 uint8_t SPI_Echo(u8 data);
 
 void spi1_sd_Init(void);

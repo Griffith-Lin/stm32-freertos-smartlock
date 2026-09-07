@@ -8,6 +8,6 @@
 
 #define LED_RED_toggle() GPIO_ToggleBits(GPIOB,GPIO_Pin_8);
 
-void led_ini(void);
+void led_Config(void);
 
 #endif

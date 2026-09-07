@@ -36,6 +36,6 @@ typedef struct
 
     void key_scan_tim_ini(void);
 
-    void key_ini(void);
+    void key_Config(void);
     void Exti_key_ini(void);
 #endif

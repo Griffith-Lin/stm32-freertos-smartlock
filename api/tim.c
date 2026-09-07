@@ -2,7 +2,7 @@
 
 
 //apb2预分频系数为1，定时器不倍频。84MHz,分频系数84，实际频率1MHz，一次1us，arr为1000，周期为1ms
-void TIM10_Task_Init(uint32_t psc,uint32_t arr) 
+void TIM10_Task_Config(uint32_t psc,uint32_t arr) 
 {
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_TIM10,ENABLE);
     

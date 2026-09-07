@@ -6,7 +6,7 @@
 // X4  X3负责直接驱动电机，外接引脚
 // BAK FOR负责方向 pb3 pb4
 // 当BAK FOR都为0时，x4 x3高阻态
-void L9110S_ini(void)
+void L9110S_Config(void)
 {
     RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOB, ENABLE);
 

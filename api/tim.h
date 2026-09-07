@@ -9,7 +9,7 @@
 extern volatile uint32_t tim10_tick_ms;
 
 void TIM10_delay(uint32_t ms);
-void TIM10_Task_Init(uint32_t psc,uint32_t arr);
+void TIM10_Task_Config(uint32_t psc,uint32_t arr);
 void in_cap_ini(uint16_t psc,uint16_t arr);
 uint32_t GetTim10Tick(void);
 
