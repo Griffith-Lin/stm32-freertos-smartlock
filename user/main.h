@@ -11,6 +11,9 @@
 #include "w25qxx.h"
 #include "spi.h"
 #include "key.h"
+#include "w25qxx.h"
+#include "dma.h"
+#include "lcd.h"
 
 #endif
 
