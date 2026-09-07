@@ -13,6 +13,12 @@
 
 /*---------------- 任务与内存 ----------------*/
 #define INCLUDE_vTaskDelay            1
+#define INCLUDE_vTaskDelete           1   /* vTaskDelete: 溢出 hook 里"枪毙"任务 */
+#define INCLUDE_uxTaskPriorityGet     1   /* hook 里打印任务优先级 */
+#define INCLUDE_xTaskDelayUntil       1   /* print_task2 精确周期延时 */
+//以后凡是链接报"Undefined symbol"而头文件里明明有声明，先怀疑是不是没开对应的 INCLUDE_xxx 开关——这是 FreeRTOS 为了省 flash/RAM 故意做的裁剪，编译器抓不到，只有链接器能抓到。
+
+#define INCLUDE_vTaskDelay            1
 #define configUSE_PREEMPTION            1
 #define configMAX_PRIORITIES            (5)      /* 任务优先级 0~4，够用 */
 #define configMINIMAL_STACK_SIZE        (128)    /* 单位是"字"(4字节)，128字=512字节 */
