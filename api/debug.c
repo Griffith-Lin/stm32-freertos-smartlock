@@ -26,3 +26,11 @@ void font_test(void)
     */
 }
 
+
+void die(uint16_t n)
+{
+    char buf[100];
+    buf[0] = (char)n;        // 让编译器没法偷懒把这层纸删掉
+    if (n > 0)
+        die(n - 1);          // 喊 n 次就一层层回头
+}
