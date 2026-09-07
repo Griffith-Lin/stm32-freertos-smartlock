@@ -74,19 +74,25 @@ static void led_task(void *arg)
     }
 }
 
-/**
- * @brief 串口打印测试任务
- * @param arg 任务参数(未使用)
- * @return 无
- * @note 每 500ms 通过 printf 输出 "111"
- */
-static void print_task(void *arg)
+
+static void print_task1(void *arg)
 {
 
     while (1)
     {
         printf("111\r\n");
         vTaskDelay(500);
+    }
+}
+
+//做"每 500ms 精确一次"的闪烁，对比?vTaskDelay?的漂移
+static void print_task2(void *arg)
+{
+
+    while (1)
+    {
+        printf("222\r\n");
+        vTaskDelayUntil(500);
     }
 }
 
@@ -135,11 +141,13 @@ int main()
     );
 
     */
-    BaseType_t rc1 = xTaskCreate(led_task, "led_task", 32, NULL, 3, NULL);
+    BaseType_t rc1 = xTaskCreate(led_task, "led_task", 128, NULL, 3, NULL);
 
-    BaseType_t rc2 = xTaskCreate(print_task, "print_task", 128, NULL, 1, NULL);
+    BaseType_t rc2 = xTaskCreate(print_task1, "print_task1", 128, NULL, 1, NULL);
 
-    BaseType_t rc3 = xTaskCreate(lcd_task, "lcd_task", 128, NULL, 2, NULL);
+    BaseType_t rc3 = xTaskCreate(print_task2, "print_task2", 128, NULL, 1, NULL);
+
+    BaseType_t rc4 = xTaskCreate(lcd_task, "lcd_task", 128, NULL, 2, NULL);
 
     vTaskStartScheduler();
     /*
