@@ -7,9 +7,8 @@
                 "g:\\github\\train2\\startup",
                 "g:\\github\\train2\\user",
                 "g:\\github\\train2\\lib\\inc",
-                "D:\\keil5core\\ARM\\ARMCC\\include",
-                "D:\\keil5core\\ARM\\ARMCC\\include\\rw",
-                "g:\\github\\train2\\lib\\src"
+                "g:\\github\\train2\\lib\\src",
+                "G:\\github\\train2\\freertos\\**"
             ],
             "defines": [
                 "STM32F401xx",
