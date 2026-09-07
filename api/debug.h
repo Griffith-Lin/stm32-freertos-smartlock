@@ -4,4 +4,6 @@
 #include "stm32f4xx.h"
 #include "dma.h"
 
+
+void die(uint16_t n);
 #endif
