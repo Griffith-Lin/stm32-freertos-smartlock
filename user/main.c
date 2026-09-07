@@ -88,13 +88,16 @@ static void print_task1(void *arg)
 //做"每 500ms 精确一次"的闪烁，对比?vTaskDelay?的漂移
 static void print_task2(void *arg)
 {
+    TickType_t lastWakeTime = xTaskGetTickCount();  // 锚点：进循环前对准一次
 
     while (1)
     {
         printf("222\r\n");
-        vTaskDelayUntil(500);
+        vTaskDelayUntil(&lastWakeTime, 500);  // 固定在"上次 + 500ms"醒，不漂移
     }
 }
+
+
 
 /**
  * @brief LCD 刷屏测试任务
