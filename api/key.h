@@ -5,31 +5,31 @@
 #include "delay.h"
 #include "tim.h"
 
-#define KEY_EVENT_NONE 0          // ÎŞÊÂ¼ş
-#define KEY_EVENT_PRESS 1         // °´ÏÂÈ·ÈÏ(½øÈëPRESSEDË²¼ä)
-#define KEY_EVENT_SHORT_PRESS 2   // ¶Ì°´(ÊÍ·ÅÊ±ÅĞ¶¨)
-#define KEY_EVENT_LONG_PRESS 3    // ³¤°´(ÊÍ·ÅÊ±ÅĞ¶¨)
-#define LONG_PRESS_THRESHOLD 600 // ³¤°´ãĞÖµ,µ¥Î»ms
+#define KEY_EVENT_NONE 0          // æ— äº‹ä»¶
+#define KEY_EVENT_PRESS 1         // æŒ‰ä¸‹ç¡®è®¤(è¿›å…¥PRESSEDç¬é—´)
+#define KEY_EVENT_SHORT_PRESS 2   // çŸ­æŒ‰(é‡Šæ”¾æ—¶åˆ¤å®š)
+#define KEY_EVENT_LONG_PRESS 3    // é•¿æŒ‰(é‡Šæ”¾æ—¶åˆ¤å®š)
+#define LONG_PRESS_THRESHOLD 600 // é•¿æŒ‰é˜ˆå€¼,å•ä½ms
 
 
 extern volatile uint8_t flag;
 
 typedef enum
 {
-    KEY_STATE_IDLE,     // ¿ÕÏĞ
-    KEY_STATE_DEBOUNCE, // Ïû¶¶È·ÈÏÖĞ
-    KEY_STATE_PRESSED,  // ÒÑÈ·ÈÏ°´ÏÂ
-    KEY_STATE_RELEASE   // ÊÍ·Å¼ì²âÖĞ
+    KEY_STATE_IDLE,     // ç©ºé—²
+    KEY_STATE_DEBOUNCE, // æ¶ˆæŠ–ç¡®è®¤ä¸­
+    KEY_STATE_PRESSED,  // å·²ç¡®è®¤æŒ‰ä¸‹
+    KEY_STATE_RELEASE   // é‡Šæ”¾æ£€æµ‹ä¸­
 } KeyState_t;
 
 typedef struct
 {
-    GPIO_TypeDef *port; // °´¼üËùÔÚ GPIO ¶Ë¿Ú,Èç GPIOB
+    GPIO_TypeDef *port; // æŒ‰é”®æ‰€åœ¨ GPIO ç«¯å£,å¦‚ GPIOB
     uint16_t pin;
-    KeyState_t state;          // ×´Ì¬»úµ±Ç°×´Ì¬: IDLE(¿ÕÏĞ)/DEBOUNCE(Ïû¶¶)/PRESSED(°´ÏÂ)/RELEASE(ÊÍ·Å)
-    uint8_t debounce_count;    // Ïû¶¶¼ÆÊı: Í¬Ò»µçÆ½Á¬ĞøÉ¨Ãè´ÎÊı,>=3(=30ms)²ÅÈ·ÈÏÓĞĞ§
-    uint32_t press_start_time; // °´ÏÂÈ·ÈÏÊ±¿ÌµÄºÁÃë¼ÆÊı(GetSystemTick·µ»ØÖµ),ÓÃÓÚËã°´Ñ¹Ê±³¤
-    uint8_t event_flag;        // ÊÂ¼ş±êÖ¾(Éú²úÕß-Ïû·ÑÕßĞÅÏä): ÖĞ¶ÏÖÃÎ»,Ö÷Ñ­»·Ïû·ÑºóÇå0
+    KeyState_t state;          // çŠ¶æ€æœºå½“å‰çŠ¶æ€: IDLE(ç©ºé—²)/DEBOUNCE(æ¶ˆæŠ–)/PRESSED(æŒ‰ä¸‹)/RELEASE(é‡Šæ”¾)
+    uint8_t debounce_count;    // æ¶ˆæŠ–è®¡æ•°: åŒä¸€ç”µå¹³è¿ç»­æ‰«ææ¬¡æ•°,>=3(=30ms)æ‰ç¡®è®¤æœ‰æ•ˆ
+    uint32_t press_start_time; // æŒ‰ä¸‹ç¡®è®¤æ—¶åˆ»çš„æ¯«ç§’è®¡æ•°(GetSystemTickè¿”å›å€¼),ç”¨äºç®—æŒ‰å‹æ—¶é•¿
+    uint8_t event_flag;        // äº‹ä»¶æ ‡å¿—(ç”Ÿäº§è€…-æ¶ˆè´¹è€…ä¿¡ç®±): ä¸­æ–­ç½®ä½,ä¸»å¾ªç¯æ¶ˆè´¹åæ¸…0
 }Key_t;
 
     extern volatile uint32_t motor_ccr;

@@ -3,7 +3,7 @@
 volatile Key_t keys[3] = {0};
 
 
-//pc13 key2 ÊäÈëÄ£Ê½£¬µ±³öÏÖ´Ó¸ßµ½µÍµçÆ½µÄÌø±äÊ±£¬´¥·¢ÖĞ¶Ï
+//pc13 key2 è¾“å…¥æ¨¡å¼ï¼Œå½“å‡ºç°ä»é«˜åˆ°ä½ç”µå¹³çš„è·³å˜æ—¶ï¼Œè§¦å‘ä¸­æ–­
 void key_Config(void)
 {
     RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
@@ -33,17 +33,17 @@ void ProcessKey(volatile Key_t *key)
     switch (key->state)
     {
     case KEY_STATE_IDLE:
-        if (level == 0)// ÎÊµÄÊÇ£º°´ÏÂÁËÂğ£¿
+        if (level == 0)// é—®çš„æ˜¯ï¼šæŒ‰ä¸‹äº†å—ï¼Ÿ
         {
             key->state = KEY_STATE_DEBOUNCE;
             key->debounce_count = 0;
         }
         break;
 
-    case KEY_STATE_DEBOUNCE: // °´ÏÂÏû¶¶
-        if (level == 0)// ÎÊµÄÊÇ£º°´ÏÂÁËÂğ£¿
+    case KEY_STATE_DEBOUNCE: // æŒ‰ä¸‹æ¶ˆæŠ–
+        if (level == 0)// é—®çš„æ˜¯ï¼šæŒ‰ä¸‹äº†å—ï¼Ÿ
         {
-            if (++key->debounce_count >= 3)//Á¬Ğø 3 ´Î ==0 ?	3ms Á¬ĞøµÍ È·ÈÏÕæµÄ°´×¡ÁË ¡ú PRESSED
+            if (++key->debounce_count >= 3)//è¿ç»­ 3 æ¬¡ ==0 ?	3ms è¿ç»­ä½ ç¡®è®¤çœŸçš„æŒ‰ä½äº† â†’ PRESSED
             { 
                 key->state = KEY_STATE_PRESSED;
                 key->press_start_time = GetTim10Tick();
@@ -52,23 +52,23 @@ void ProcessKey(volatile Key_t *key)
         }
         else
         {
-            key->state = KEY_STATE_IDLE; // ÅĞ¶¨Îª¶¶¶¯,×÷·Ï£¬»Ø¿ÕÏĞ×´Ì¬
+            key->state = KEY_STATE_IDLE; // åˆ¤å®šä¸ºæŠ–åŠ¨,ä½œåºŸï¼Œå›ç©ºé—²çŠ¶æ€
             key->debounce_count = 0;
         }
         break;
 
-    case KEY_STATE_PRESSED: // ÒÑÈ·ÈÏ°´ÏÂ,¼ì²âÊÍ·Å
-        if (level == 1)// ÎÊµÄÊÇ£ºËÉ¿ªÁËÂğ£¿
+    case KEY_STATE_PRESSED: // å·²ç¡®è®¤æŒ‰ä¸‹,æ£€æµ‹é‡Šæ”¾
+        if (level == 1)// é—®çš„æ˜¯ï¼šæ¾å¼€äº†å—ï¼Ÿ
         {
             key->debounce_count = 0;
-            key->state = KEY_STATE_RELEASE; // ÏÈ½øÊÍ·ÅÏû¶¶,±ğÖ±½ÓÅĞÊÂ¼ş
+            key->state = KEY_STATE_RELEASE; // å…ˆè¿›é‡Šæ”¾æ¶ˆæŠ–,åˆ«ç›´æ¥åˆ¤äº‹ä»¶
         }
         break;
 
-    case KEY_STATE_RELEASE: // ÊÍ·ÅÏû¶¶:Á¬Ğø3´ÎÎª¸ß²ÅÈ·ÈÏÊÍ·Å
-        if (level == 1)// ÎÊµÄÊÇ£ºËÉ¿ªÁËÂğ£¿
+    case KEY_STATE_RELEASE: // é‡Šæ”¾æ¶ˆæŠ–:è¿ç»­3æ¬¡ä¸ºé«˜æ‰ç¡®è®¤é‡Šæ”¾
+        if (level == 1)// é—®çš„æ˜¯ï¼šæ¾å¼€äº†å—ï¼Ÿ
         {
-            if (++key->debounce_count >= 3)//Á¬ĞøÈı´ÎÅĞ¶¨³É¹¦£¬½øÈë³¤¶Ì°´Ê±³¤ÅĞ¶Ï
+            if (++key->debounce_count >= 3)//è¿ç»­ä¸‰æ¬¡åˆ¤å®šæˆåŠŸï¼Œè¿›å…¥é•¿çŸ­æŒ‰æ—¶é•¿åˆ¤æ–­
             {
                 uint32_t duration = GetTim10Tick() - key->press_start_time;
                 key->event_flag = (duration > LONG_PRESS_THRESHOLD)
@@ -77,7 +77,7 @@ void ProcessKey(volatile Key_t *key)
                 key->state = KEY_STATE_IDLE;
             }
         }
-        else// ÊÍ·ÅÏû¶¶ÖĞÓÖ±äµÍ£ºÃ»ËÉ¸É¾»£¬»Øµ½ PRESSED ÖØĞÂ¼ì²âÊÍ·Å
+        else// é‡Šæ”¾æ¶ˆæŠ–ä¸­åˆå˜ä½ï¼šæ²¡æ¾å¹²å‡€ï¼Œå›åˆ° PRESSED é‡æ–°æ£€æµ‹é‡Šæ”¾
         {
             key->state = KEY_STATE_PRESSED; 
             key->debounce_count = 0;
@@ -92,11 +92,11 @@ void TIM1_UP_TIM10_IRQHandler(void)
     if (TIM_GetITStatus(TIM10, TIM_IT_Update) != RESET)
     {
         TIM_ClearITPendingBit(TIM10, TIM_IT_Update);
-        tim10_tick_ms++;//Ê±»ù£¬´¿½ÚÅÄÎ¬»¤
+        tim10_tick_ms++;//æ—¶åŸºï¼Œçº¯èŠ‚æ‹ç»´æŠ¤
         ProcessKey(&keys[1]);
     }
 
-    if (keys[1].event_flag == KEY_EVENT_SHORT_PRESS)//¶Ì°´ÊÂ¼ş
+    if (keys[1].event_flag == KEY_EVENT_SHORT_PRESS)//çŸ­æŒ‰äº‹ä»¶
     {
         keys[1].event_flag = KEY_EVENT_NONE;
 
@@ -104,9 +104,9 @@ void TIM1_UP_TIM10_IRQHandler(void)
 
     }
 
-    if (keys[1].event_flag == KEY_EVENT_LONG_PRESS)//³¤°´ÊÂ¼ş
+    if (keys[1].event_flag == KEY_EVENT_LONG_PRESS)//é•¿æŒ‰äº‹ä»¶
     {
-        keys[1].event_flag = KEY_EVENT_NONE; // Ïû·ÑÊÂ¼ş
+        keys[1].event_flag = KEY_EVENT_NONE; // æ¶ˆè´¹äº‹ä»¶
         flag=1;
 
 

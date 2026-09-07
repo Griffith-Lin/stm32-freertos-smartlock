@@ -2,7 +2,7 @@
 #define __TIM_
 
 #include "stm32f4xx.h"
-#include "stdio.h" //¿ÉÒÔÓÃprintf
+#include "stdio.h" //å¯ä»¥ç”¨printf
 
 
 #include <stddef.h>

@@ -24,29 +24,29 @@ void usart1_Config(uint32_t brr)
     
     USART_InitTypeDef usart_InitTypeDef;
     
-    usart_InitTypeDef.USART_BaudRate = brr;            // ¿âº¯ÊıÄÚ²¿×Ô¶¯¼ÆËã div_m ºÍ div_f
-    usart_InitTypeDef.USART_WordLength = USART_WordLength_8b; // CR1 &= ~(1<<12) -> 8Î»
-    usart_InitTypeDef.USART_StopBits = USART_StopBits_1;      // CR2 &= ~(3<<12) -> 1Î»Í£Ö¹Î»
-    usart_InitTypeDef.USART_Parity = USART_Parity_No;         // CR1 &= ~(1<<10) -> ÎŞĞ£Ñé
-    usart_InitTypeDef.USART_HardwareFlowControl = USART_HardwareFlowControl_None; // ÎŞÁ÷¿Ø
-    usart_InitTypeDef.USART_Mode = USART_Mode_Rx | USART_Mode_Tx; // CR1 |= (3<<2) -> ÊÕ·¢Ê¹ÄÜ
+    usart_InitTypeDef.USART_BaudRate = brr;            // åº“å‡½æ•°å†…éƒ¨è‡ªåŠ¨è®¡ç®— div_m å’Œ div_f
+    usart_InitTypeDef.USART_WordLength = USART_WordLength_8b; // CR1 &= ~(1<<12) -> 8ä½
+    usart_InitTypeDef.USART_StopBits = USART_StopBits_1;      // CR2 &= ~(3<<12) -> 1ä½åœæ­¢ä½
+    usart_InitTypeDef.USART_Parity = USART_Parity_No;         // CR1 &= ~(1<<10) -> æ— æ ¡éªŒ
+    usart_InitTypeDef.USART_HardwareFlowControl = USART_HardwareFlowControl_None; // æ— æµæ§
+    usart_InitTypeDef.USART_Mode = USART_Mode_Rx | USART_Mode_Tx; // CR1 |= (3<<2) -> æ”¶å‘ä½¿èƒ½
 
     NVIC_InitTypeDef NVIC_InitStructure;
     NVIC_InitStructure.NVIC_IRQChannel = USART1_IRQn;
-    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 3; // ÇÀÕ¼ÓÅÏÈ¼¶
-    NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;        // ×ÓÓÅÏÈ¼¶
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 3; // æŠ¢å ä¼˜å…ˆçº§
+    NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;        // å­ä¼˜å…ˆçº§
     
     NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
     
     NVIC_Init(&NVIC_InitStructure);
 
-    USART_ITConfig(USART1,USART_IT_RXNE,ENABLE);//½ÓÊÕÖĞ¶ÏÊ¹ÄÜ
-    USART_ITConfig(USART1,USART_IT_IDLE,ENABLE);//¿ÕÏĞÖĞ¶ÏÊ¹ÄÜ
+    USART_ITConfig(USART1,USART_IT_RXNE,ENABLE);//æ¥æ”¶ä¸­æ–­ä½¿èƒ½
+    USART_ITConfig(USART1,USART_IT_IDLE,ENABLE);//ç©ºé—²ä¸­æ–­ä½¿èƒ½
 
-    // ³õÊ¼»¯ USART1
+    // åˆå§‹åŒ– USART1
     USART_Init(USART1, &usart_InitTypeDef);
     
-    //Ê¹ÄÜ
+    //ä½¿èƒ½
     USART_Cmd(USART1, ENABLE);
     
 }
@@ -54,7 +54,7 @@ void usart1_Config(uint32_t brr)
 
 void usart1_send_byte(uint8_t byte)
 {
-    while(!USART_GetFlagStatus(USART1,USART_FLAG_TXE));//µÈ´ı½ÓÊÕ±êÖ¾Î»
+    while(!USART_GetFlagStatus(USART1,USART_FLAG_TXE));//ç­‰å¾…æ¥æ”¶æ ‡å¿—ä½
 
     USART_SendData(USART1,byte);
 }
@@ -69,19 +69,19 @@ uint8_t usart1_rev_byte(void)
 
 
 volatile uint8_t usart_flag=0;
-volatile uint8_t str_buf[100];//ÓÃÀ´½ÓÊÕ´®¿ÚÊı¾İ
+volatile uint8_t str_buf[100];//ç”¨æ¥æ¥æ”¶ä¸²å£æ•°æ®
 
 void USART1_IRQHandler(void) 
 {
     static uint16_t i=0;
-    if(USART_GetITStatus(USART1,USART_IT_RXNE))//½ÓÊÕÖĞ¶Ï
+    if(USART_GetITStatus(USART1,USART_IT_RXNE))//æ¥æ”¶ä¸­æ–­
     {
-        USART_ClearITPendingBit(USART1,USART_IT_RXNE);//Çå³ı±êÖ¾Î»
+        USART_ClearITPendingBit(USART1,USART_IT_RXNE);//æ¸…é™¤æ ‡å¿—ä½
         str_buf[i++]=USART_ReceiveData(USART1);
     }
     
     
-    if(USART_GetITStatus(USART1,USART_IT_IDLE))//¿ÕÏĞÖĞ¶Ï
+    if(USART_GetITStatus(USART1,USART_IT_IDLE))//ç©ºé—²ä¸­æ–­
     {
         volatile uint32_t temp;
         temp=USART1->SR;
@@ -98,8 +98,8 @@ void USART1_IRQHandler(void)
 
 
 
-//´®¿Ú´ÓÉÏÎ»»ú½ÓÊÕ²»¹æ·¶×Ö·û´®(....\r\n)
-//µ÷ÓÃÕß´«µÄ buffer ¿ÉÄÜÊÇ uint8_t buff[50]£¬µ«º¯Êı²»ÖªµÀ£¬·¢ 200 ×Ö½Ú¾ÍÒç³öÁË,×îºÃÔÙ½ÓÊÕÒ»¸ö³¤¶Èmax_len
+//ä¸²å£ä»ä¸Šä½æœºæ¥æ”¶ä¸è§„èŒƒå­—ç¬¦ä¸²(....\r\n)
+//è°ƒç”¨è€…ä¼ çš„ buffer å¯èƒ½æ˜¯ uint8_t buff[50]ï¼Œä½†å‡½æ•°ä¸çŸ¥é“ï¼Œå‘ 200 å­—èŠ‚å°±æº¢å‡ºäº†,æœ€å¥½å†æ¥æ”¶ä¸€ä¸ªé•¿åº¦max_len
 void usart1_rev_string(uint8_t * buffer)
 {
     while(1)
@@ -117,19 +117,19 @@ void usart1_rev_string(uint8_t * buffer)
     *(buffer+1)='\0';
 }
 
-//´®¿Ú1·¢ËÍ×Ö·û´®
-void usart1_send_string(volatile uint8_t *str)//¸Õ¸ÕÃ»ÓĞĞ´volatileĞŞÊÎ uint8_t *str£¬±àÒëÆ÷¾¯¸æÁË¡£´«²ÎÊ± volatile uint8_t * ¡ú uint8_t *£¬±àÒëÆ÷ÈÏÎªÄã¶ªµôÁË volatile ĞŞÊÎ£¬ÕâÊÇÔÚÌáĞÑÄã£º"Õâ¸ö±äÁ¿ÎÒ±¾À´Ã¿´Î¶¼Òª´ÓÄÚ´æ¶ÁµÄ£¬´«½øÈ¥Ö®ºóº¯Êı¿ÉÄÜ°ÑËüÓÅ»¯³É¼Ä´æÆ÷»º´æ£¬Äã²»ÅÂÂğ£¿"
+//ä¸²å£1å‘é€å­—ç¬¦ä¸²
+void usart1_send_string(volatile uint8_t *str)//åˆšåˆšæ²¡æœ‰å†™volatileä¿®é¥° uint8_t *strï¼Œç¼–è¯‘å™¨è­¦å‘Šäº†ã€‚ä¼ å‚æ—¶ volatile uint8_t * â†’ uint8_t *ï¼Œç¼–è¯‘å™¨è®¤ä¸ºä½ ä¸¢æ‰äº† volatile ä¿®é¥°ï¼Œè¿™æ˜¯åœ¨æé†’ä½ ï¼š"è¿™ä¸ªå˜é‡æˆ‘æœ¬æ¥æ¯æ¬¡éƒ½è¦ä»å†…å­˜è¯»çš„ï¼Œä¼ è¿›å»ä¹‹åå‡½æ•°å¯èƒ½æŠŠå®ƒä¼˜åŒ–æˆå¯„å­˜å™¨ç¼“å­˜ï¼Œä½ ä¸æ€•å—ï¼Ÿ"
 {
     while(*str!='\0')
 	{
 		usart1_send_byte(*str);
 		str++;
 	}
-    usart1_send_byte('\0');//ÔÙ·¢ËÍÒ»¸ö'\0'¹æ·¶·¢ËÍ³öµÄ×Ö·û´®
+    usart1_send_byte('\0');//å†å‘é€ä¸€ä¸ª'\0'è§„èŒƒå‘é€å‡ºçš„å­—ç¬¦ä¸²
 }
 
 
-//´®¿Ú1½ÓÊÕ¹æ·¶×Ö·û´®(....\0)
+//ä¸²å£1æ¥æ”¶è§„èŒƒå­—ç¬¦ä¸²(....\0)
 void usart1_rev_string_norm(uint8_t * buffer)
 {
     while(1)
@@ -147,7 +147,7 @@ void usart1_rev_string_norm(uint8_t * buffer)
     
 }
 
-//ÑéÖ¤½ÓÊÕµÄ×Ö·û´®
+//éªŒè¯æ¥æ”¶çš„å­—ç¬¦ä¸²
 void rev_process(const volatile char* buff)
 {
     if(strcmp((const char *)buff,"led1_on")== 0)
