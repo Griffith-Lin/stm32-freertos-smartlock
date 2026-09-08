@@ -12,24 +12,24 @@
     /* V11 强制要求（替代旧版 configUSE_16_BIT_TICKS），32 位节拍计数器 */
 
 /*---------------- 任务与内存 ----------------*/
-#define INCLUDE_vTaskDelay            1
-#define INCLUDE_vTaskDelete           1   /* vTaskDelete: 溢出 hook 里"枪毙"任务 */
-#define INCLUDE_uxTaskPriorityGet     1   /* hook 里打印任务优先级 */
-#define INCLUDE_xTaskDelayUntil       1   /* print_task2 精确周期延时 */
+#define INCLUDE_vTaskDelay            1   /* 启用 vTaskDelay() 延时 API */
+#define INCLUDE_vTaskDelete           1   /* 启用 vTaskDelete() 删除任务 API */
+#define INCLUDE_uxTaskPriorityGet     1   /* 启用 uxTaskPriorityGet() 查询任务优先级 API */
+#define INCLUDE_xTaskDelayUntil       1   /* 启用 xTaskDelayUntil() 固定周期延时 API */
 //以后凡是链接报"Undefined symbol"而头文件里明明有声明，先怀疑是不是没开对应的 INCLUDE_xxx 开关——这是 FreeRTOS 为了省 flash/RAM 故意做的裁剪，编译器抓不到，只有链接器能抓到。
 
 
-#define INCLUDE_vTaskDelay            1
-#define configUSE_PREEMPTION            1
-#define configMAX_PRIORITIES            (5)      /* 任务优先级 0~4，够用 */
-#define configMINIMAL_STACK_SIZE        (128)    /* 单位是"字"(4字节)，128字=512字节 */
-#define configTOTAL_HEAP_SIZE           (8 * 1024)  /* 8KB 堆，先这样，不够再加 */
-#define configMAX_TASK_NAME_LEN         (12)
-#define configIDLE_SHOULD_YIELD         1
-#define configUSE_MUTEXES               1
-#define configUSE_RECURSIVE_MUTEXES     1
-#define configUSE_COUNTING_SEMAPHORES   1
-#define configQUEUE_REGISTRY_SIZE       8
+#define INCLUDE_vTaskDelay            1   /* 重复定义：保持启用 vTaskDelay()，建议后续删除此行 */
+#define configUSE_PREEMPTION            1   /* 启用抢占式调度：高优先级就绪任务可抢占低优先级任务 */
+#define configMAX_PRIORITIES            (5)      /* 支持的任务优先级数量；实际优先级为 0~4 */
+#define configMINIMAL_STACK_SIZE        (128)    /* 空闲任务最小栈深度，单位为字；32 位 MCU 中 128 字=512 字节 */
+#define configTOTAL_HEAP_SIZE           (8 * 1024)  /* FreeRTOS 动态内存堆大小，单位为字节 */
+#define configMAX_TASK_NAME_LEN         (12)     /* 任务名称缓冲区最大长度，通常包含结尾的 '\0' */
+#define configIDLE_SHOULD_YIELD         1        /* 同优先级任务就绪时，允许空闲任务主动让出 CPU */
+#define configUSE_MUTEXES               1        /* 启用互斥量及其优先级继承机制 */
+#define configUSE_RECURSIVE_MUTEXES     1        /* 启用递归互斥量 */
+#define configUSE_COUNTING_SEMAPHORES   1        /* 启用计数信号量 */
+#define configQUEUE_REGISTRY_SIZE       8        /* 队列/信号量注册表容量，用于调试查看对象名称 */
 
 /*---------------- 软件定时器 ----------------*/
 #define configUSE_TIMERS                1

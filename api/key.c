@@ -98,7 +98,7 @@ void ProcessKey(volatile Key_t *key)
 static void key_scan_task(void *arg)
 {
     TickType_t lastWake = xTaskGetTickCount(); // 节拍锚点，用来固定 10ms 一拍(消抖30ms=3拍)
-    uint8_t evt;
+    uint8_t evt;//用来存储按键事件
 
     for (;;)
     {
@@ -123,11 +123,11 @@ static void key_scan_task(void *arg)
  */
 static void key_action_task(void *arg)
 {
-    uint8_t evt;
+    uint8_t evt;//用来接收按键事件
 
     for (;;)
     {
-        if (xQueueReceive(key_queue, &evt, portMAX_DELAY) == pdPASS)
+        if (xQueueReceive(key_queue, &evt, portMAX_DELAY) == pdPASS)//portMAX_DELAY 的效果是：任务不会主动轮询，也不会占用 CPU 等待，而是进入阻塞状态，直到队列有数据。若启用了 FreeRTOS 的时间片配置，通常还会配合队列等待超时使用。
         {
             switch (evt)
             {
@@ -135,7 +135,7 @@ static void key_action_task(void *arg)
                 LED_RED_toggle(); // 短按 → 红灯翻转
                 break;
             case KEY_EVENT_LONG_PRESS:
-                flag = 1; // 长按 → 置标志 + 绿灯翻转(看得见的反馈)
+                flag = 1; // 长按 → 置标志 + 蓝灯翻转(看得见的反馈)
                 LED_BLUE_toggle();
                 break;
             default:
