@@ -4,12 +4,6 @@
 
 // pa9 u1_tx  pa10 u1_rx
 // cp2102连在串口1上
-/**
- * @brief printf 底层发送函数,将单个字符通过 USART1 发出
- * @param c 待发送的字符
- * @param stream 文件流指针(printf 内部使用)
- * @return 发送的字符 c
- */
 int fputc(int c, FILE *stream)
 {
     while ((USART1->SR & (1 << 7)) == 0)
@@ -72,20 +66,7 @@ static void print_task1(void *arg)
 
     while (1)
     {
-        // printf("111\r\n");
-
-        // uint8_t level1 = GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_8);
-        // printf("level1 = %d\r\n", level);
-        // uint8_t level2 = GPIO_ReadOutputDataBit(GPIOB,GPIO_Pin_8);
-        // printf("level2 = %d\r\n", level2);
-
-        // uint8_t level3 = GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_9);
-        // printf("level3 = %d\r\n", level3);
-        // uint8_t level4 = GPIO_ReadOutputDataBit(GPIOB,GPIO_Pin_9);
-        // printf("level4 = %d\r\n", level4);
-
-        // printf("key2_in = %d\r\n", GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_13));
-        // printf("key2_out = %d\r\n", GPIO_ReadOutputDataBit(GPIOC, GPIO_Pin_13));
+        printf("111\r\n");
         vTaskDelay(500);
     }
 }
@@ -97,7 +78,7 @@ static void print_task2(void *arg)
 
     while (1)
     {
-        // printf("222\r\n");
+        printf("222\r\n");
         vTaskDelayUntil(&lastWakeTime, 1000); // 固定在"上次 + 500ms"醒，不漂移
     }
 }
@@ -121,7 +102,7 @@ static void lcd_task(void *arg)
 
 void vApplicationIdleHook(void) // FreeRTOS 空闲任务钩子函数,由 configUSE_IDLE_HOOK 使能
 {
-    // LED_GREEN_toggle();           // 别忘了分号
+    // LED_BLUE_toggle();           // 别忘了分号
 }
 
 /**
@@ -139,10 +120,9 @@ int main()
     L9110S_Config();
     spi1_w25_Config();
     LCD_Init();
-    key_Config();
+    key_tasks_init(); // 建队列 + 创建 key_scan(生产事件)/ key_action(消费) 两个任务
 
-    /*
-    BaseType_t xTaskCreate(
+    /*BaseType_t xTaskCreate(
     TaskFunction_t      pxTaskCode,    // ① 任务函数指针
     const char * const  pcName,        // ② 任务名字（仅调试用）
     configSTACK_DEPTH_TYPE usStackDepth, // ③ 栈深度（单位：字！）32位系统：1字 = 4字节（32位）
@@ -161,8 +141,8 @@ int main()
     BaseType_t rc4 = xTaskCreate(lcd_task, "lcd_task", 128, NULL, 2, NULL);
 
     vTaskStartScheduler();
-    /*
-     从堆（heap_4）分配两块内存：TCB（任务控制块，内核用 struct tskTaskControlBlock 管理这个任务）+ 任务栈（你说的 128 字）
+    /*从堆（heap_4）分配两块内存：
+    TCB（任务控制块，内核用 struct tskTaskControlBlock 管理这个任务）+ 任务栈（你说的 128 字）
     调用移植层的 pxPortInitialiseStack 把任务栈预铺成"刚被中断打断的样子"——里面预置了 xPSR、PC（指向你的任务函数）、LR（指向 prvTaskExitError）、R0（参数）——这样第一次"切进去"就像恢复一次中断上下文
     把 TCB 链进就绪链表中优先级 1 的队列
     返回
@@ -173,8 +153,8 @@ int main()
         ;
 }
 
-/*
-栈 = 任务干活时用的草稿纸。
+/*栈 = 任务干活时用的草稿纸。
+
 
 函数每次调用别的函数（比如 LED_RED_toggle()）、存临时变量，都要在纸上写几笔。纸不够用，写到"本子外头"去了，就叫栈溢出。
 
