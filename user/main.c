@@ -1,6 +1,7 @@
 #include "main.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "learn.h" // 学习演示任务(learn.c):互斥量/计数信号量/LCD测试等,与业务无关
 
 // pa9 u1_tx  pa10 u1_rx
 // cp2102连在串口1上
@@ -51,58 +52,9 @@ void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
         ; /* 任务栈溢出（栈配小了或递归太深） */
 }
 
-static void led_task(void *arg)
-{
-
-    while (1) // while(1) 则是有意的任务主循环——调用 vTaskDelay(500) 主动让出 CPU，不是卡死，而是 FreeRTOS 任务的标准写法。
-    {
-        // die(5); 模拟栈溢出
-        vTaskDelay(500);
-    }
-}
-
-static void print_task1(void *arg)
-{
-
-    while (1)
-    {
-        printf("111\r\n");
-        vTaskDelay(500);
-    }
-}
-
-// 做"每 500ms 精确一次"的闪烁，对比?vTaskDelay?的漂移
-static void print_task2(void *arg)
-{
-    TickType_t lastWakeTime = xTaskGetTickCount(); // 锚点：进循环前对准一次
-
-    while (1)
-    {
-        printf("222\r\n");
-        vTaskDelayUntil(&lastWakeTime, 1000); // 固定在"上次 + 500ms"醒，不漂移
-    }
-}
-
-/**
- * @brief LCD 刷屏测试任务
- * @param arg 任务参数(未使用)
- * @return 无
- * @note 每 500ms 白/黑全屏交替,用于验证 LCD 驱动
- */
-static void lcd_task(void *arg)
-{
-    while (1)
-    {
-        LCD_Clear(0, 240, 0, 320, WHITE);
-        vTaskDelay(500);
-        LCD_Clear(0, 240, 0, 320, BLACK);
-        vTaskDelay(500);
-    }
-}
-
 void vApplicationIdleHook(void) // FreeRTOS 空闲任务钩子函数,由 configUSE_IDLE_HOOK 使能
 {
-    // LED_BLUE_toggle();           // 别忘了分号
+    // LED_BLUE_toggle();空闲状态可视化
 }
 
 /**
@@ -114,58 +66,27 @@ int main()
 {
     NVIC_PriorityGroupConfig(NVIC_PriorityGroup_4);
 
-    TIM10_Task_Config(84, 1000);
+    // ===== 外设初始化 =====
+    TIM10_Task_Config(84, 1000); // 1ms 毫秒时基(TIM10 中断维护 tim10_tick_ms)
     usart1_Config(115200);
     led_Config();
     L9110S_Config();
     spi1_w25_Config();
     LCD_Init();
-    key_tasks_init(); // 建队列 + 创建 key_scan(生产事件)/ key_action(消费) 两个任务
 
-    /*BaseType_t xTaskCreate(
-    TaskFunction_t      pxTaskCode,    // ① 任务函数指针
-    const char * const  pcName,        // ② 任务名字（仅调试用）
-    configSTACK_DEPTH_TYPE usStackDepth, // ③ 栈深度（单位：字！）32位系统：1字 = 4字节（32位）
-    void *              pvParameters,  // ④ 传给任务函数的参数
-    UBaseType_t         uxPriority,    // ⑤ 优先级，区分于stm32的NVIC优先级，FreeRTOS优先级数值越大，任务优先级越高
-    TaskHandle_t *      pxCreatedTask  // ⑥ 任务句柄（输出参数）
-    );
+    // ===== 业务任务 =====
+    key_tasks_init(); // 按键:建事件队列 + 创建 key_scan(生产)/ key_action(消费) 两个任务
 
-    */
-    BaseType_t rc1 = xTaskCreate(led_task, "led_task", 128, NULL, 3, NULL);
+    // ===== 学习演示任务(与业务无关,平时可整组注释) =====
+    // learn_tasks_init();
 
-    BaseType_t rc2 = xTaskCreate(print_task1, "print_task1", 128, NULL, 2, NULL);
+    
 
-    BaseType_t rc3 = xTaskCreate(print_task2, "print_task2", 128, NULL, 4, NULL); // 优先级最高，防止在打印的时候，被别的任务抢走 CPU，导致打印的时间戳不准确
 
-    BaseType_t rc4 = xTaskCreate(lcd_task, "lcd_task", 128, NULL, 2, NULL);
 
-    vTaskStartScheduler();
-    /*从堆（heap_4）分配两块内存：
-    TCB（任务控制块，内核用 struct tskTaskControlBlock 管理这个任务）+ 任务栈（你说的 128 字）
-    调用移植层的 pxPortInitialiseStack 把任务栈预铺成"刚被中断打断的样子"——里面预置了 xPSR、PC（指向你的任务函数）、LR（指向 prvTaskExitError）、R0（参数）——这样第一次"切进去"就像恢复一次中断上下文
-    把 TCB 链进就绪链表中优先级 1 的队列
-    返回
-     */
+    vTaskStartScheduler(); // 启动调度器,正常情况下不返回
 
-    printf("sched returned!\r\n"); // ← 加，打到这=启动失败
+    printf("sched returned!\r\n"); // ← 打到这=启动失败
     for (;;)
         ;
 }
-
-/*栈 = 任务干活时用的草稿纸。
-
-
-函数每次调用别的函数（比如 LED_RED_toggle()）、存临时变量，都要在纸上写几笔。纸不够用，写到"本子外头"去了，就叫栈溢出。
-
-FreeRTOS 怎么查溢出
-它有个土办法，像煤窑里的金丝雀：
-
-发给你一叠纸，先用记号笔在最底下那张上画个记号 0xa5
-每 500ms 任务切换（任务睡觉换人）时，翻开来看看记号那张纸有没有被写脏
-写脏了 = 你的字迹已经写到底了 = 溢出 → 喊你写的那个 Hook 打印
-你踩的坑：栈设成 1 个字 = 只发 1 张纸
-但任务"出生"时，FreeRTOS 要假装任务是被中断打断的，得先压 8 个数进栈（就像开机要先铺 8 张底稿）。
-
-问题来了：只有 1 张纸，这 8 个数根本放不进你发的这叠纸里，全写到纸堆下面去了——写的是"桌子"。
-*/
