@@ -35,10 +35,11 @@ virtualFolder:
         - path: api/key.h
         - path: api/dma.c
         - path: api/lcd.c
-        - path: api/lcd.h
         - path: api/debug.c
         - path: api/debug.h
         - path: api/io_bit.h
+        - path: api/MG200.c
+        - path: api/MG200.h
       folders: []
     - name: startup
       files:

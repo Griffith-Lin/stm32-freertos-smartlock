@@ -1,5 +1,5 @@
-#ifndef _LCD_H
-#define _LCD_H
+#ifndef _LCD_H_
+#define _LCD_H_
 
 
 #include "stm32f4xx.h"

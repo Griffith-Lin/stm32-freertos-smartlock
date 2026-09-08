@@ -1,5 +1,5 @@
-#ifndef _W25QXX_H
-#define _W25QXX_H
+#ifndef _W25QXX_H_
+#define _W25QXX_H_
 
 #include "stm32f4xx.h"
 #include "spi.h"
