@@ -51,3 +51,14 @@ uint32_t GetTim10Tick(void)
 {
     return tim10_tick_ms; // TIM10 1ms中断维护的毫秒计数
 }
+
+// TIM10 更新中断:只维护毫秒时基(服务 L9110S_move 等)
+// 按键扫描已搬到 FreeRTOS 的 key_scan_task(每10ms一次),不再进中断
+void TIM1_UP_TIM10_IRQHandler(void)
+{
+    if (TIM_GetITStatus(TIM10, TIM_IT_Update) != RESET)
+    {
+        TIM_ClearITPendingBit(TIM10, TIM_IT_Update);
+        tim10_tick_ms++; // 时基,纯节拍维护
+    }
+}
