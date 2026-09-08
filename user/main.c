@@ -2,6 +2,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "learn.h" // 学习演示任务(learn.c):互斥量/计数信号量/LCD测试等,与业务无关
+#include "mcu_wake.h" // PA0 待机唤醒(业务)
 
 // pa9 u1_tx  pa10 u1_rx
 // cp2102连在串口1上
@@ -65,6 +66,7 @@ void vApplicationIdleHook(void) // FreeRTOS 空闲任务钩子函数,由 configU
 int main()
 {
     NVIC_PriorityGroupConfig(NVIC_PriorityGroup_4);
+    mcu_wkup_Config(); // 开 PWR 时钟 + 配 PA0(WKUP),须最先于其他外设初始化
 
     // ===== 外设初始化 =====
     TIM10_Task_Config(84, 1000); // 1ms 毫秒时基(TIM10 中断维护 tim10_tick_ms)
@@ -74,15 +76,21 @@ int main()
     spi1_w25_Config();
     LCD_Init();
 
+    // ===== 待机唤醒识别(复位原因分流)=====
+    // STANDBY 唤醒 = 整片复位,一切归零重跑;靠 WUF 标志认亲,分流出不同启动流程
+    if (mcu_was_standby_wake()) // 长按 PC13 进待机 → 按 PA0 唤醒后走这里
+    {
+        printf("wake from STANDBY!\r\n"); // 冷启动不会打印这一行
+        LED_BLUE_toggle(); // 亮绿灯标记"我从待机醒来"(冷启动保持灭)
+    }
+
     // ===== 业务任务 =====
     key_tasks_init(); // 按键:建事件队列 + 创建 key_scan(生产)/ key_action(消费) 两个任务
 
-    // ===== 学习演示任务(与业务无关,平时可整组注释) =====
-    // learn_tasks_init();
-
     
 
-
+    // ===== 学习演示任务(与业务无关,平时可整组注释) =====
+    // learn_tasks_init();
 
     vTaskStartScheduler(); // 启动调度器,正常情况下不返回
 

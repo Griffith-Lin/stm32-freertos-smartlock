@@ -1,4 +1,5 @@
 #include "key.h"
+#include "mcu_wake.h" // 长按 → 进 STANDBY 待机(业务)
 
 volatile Key_t keys[3] = {0};
 uint8_t flag = 0;        // 长按置位(由 key_action_task 置,供主循环观察)
@@ -137,6 +138,7 @@ static void key_action_task(void *arg)
             case KEY_EVENT_LONG_PRESS:
                 flag = 1; // 长按 → 置标志 + 蓝灯翻转(看得见的反馈)
                 LED_BLUE_toggle();
+                mcu_enter_standby(); // 长按进 STANDBY:等 PA0 唤醒(=复位),此调用不返回
                 break;
             default:
                 break;

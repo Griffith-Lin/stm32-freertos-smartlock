@@ -40,6 +40,8 @@ virtualFolder:
         - path: api/io_bit.h
         - path: api/MG200.c
         - path: api/MG200.h
+        - path: api/mcu_wake.c
+        - path: api/mcu_wake.h
       folders: []
     - name: startup
       files:
