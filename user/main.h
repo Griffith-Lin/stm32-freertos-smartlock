@@ -15,6 +15,8 @@
 #include "dma.h"
 #include "lcd.h"
 #include "debug.h"
+#include "MG200.h"
+
 
 #endif
 

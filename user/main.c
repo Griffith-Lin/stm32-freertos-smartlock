@@ -1,11 +1,11 @@
 #include "main.h"
 #include "FreeRTOS.h"
-#include "task.h"
-#include "learn.h" // 学习演示任务(learn.c):互斥量/计数信号量/LCD测试等,与业务无关
+#include "learn.h"    // 学习演示任务(learn.c):互斥量/计数信号量/LCD测试等,与业务无关
 #include "mcu_wake.h" // PA0 待机唤醒(业务)
+#include "task.h"
 
 // pa9 u1_tx  pa10 u1_rx
-// cp2102连在串口1上
+
 int fputc(int c, FILE *stream)
 {
     while ((USART1->SR & (1 << 7)) == 0)
@@ -75,19 +75,37 @@ int main()
     L9110S_Config();
     spi1_w25_Config();
     LCD_Init();
+    mg200_Config(115200);
+
+
+    MG_rec_data rec = {0};
+    mg200_send(0x58, 0); 
+    rec = mg200_rec();
+    if (rec.valid)
+    {
+        printf("MG200 ACK cmd=%02X result=%02X OEM_ID=%u\r\n",
+               rec.cmd, rec.result, (uint16_t)(rec.para | (rec.reserve << 8)));
+    }
+    else
+    {
+        printf("MG200 invalid: %02X %02X %02X %02X %02X %02X %02X %02X calc=%02X\r\n",
+               rec.beg, rec.send_addr, rec.rec_addr, rec.cmd, rec.result,
+               rec.para, rec.reserve, rec.crc,
+               (uint8_t)(rec.send_addr + rec.rec_addr + rec.cmd + rec.result +
+                         rec.para + rec.reserve));
+    }
+    
 
     // ===== 待机唤醒识别(复位原因分流)=====
     // STANDBY 唤醒 = 整片复位,一切归零重跑;靠 WUF 标志认亲,分流出不同启动流程
     if (mcu_was_standby_wake()) // 长按 PC13 进待机 → 按 PA0 唤醒后走这里
     {
         printf("wake from STANDBY!\r\n"); // 冷启动不会打印这一行
-        LED_BLUE_toggle(); // 亮绿灯标记"我从待机醒来"(冷启动保持灭)
+        LED_BLUE_toggle();                // 亮绿灯标记"我从待机醒来"(冷启动保持灭)
     }
 
     // ===== 业务任务 =====
     key_tasks_init(); // 按键:建事件队列 + 创建 key_scan(生产)/ key_action(消费) 两个任务
-
-    
 
     // ===== 学习演示任务(与业务无关,平时可整组注释) =====
     // learn_tasks_init();
