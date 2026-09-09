@@ -34,7 +34,7 @@ void usart1_Config(uint32_t brr)
     NVIC_InitTypeDef NVIC_InitStructure;
     NVIC_InitStructure.NVIC_IRQChannel = USART1_IRQn;
     NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 3; // 抢占优先级
-    NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;        // 子优先级
+    
     
     NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;
     
