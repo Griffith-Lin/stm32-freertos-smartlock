@@ -77,13 +77,6 @@ int main()
     LCD_Init();
     mg200_Config(115200);
 
-    // mg200_add_finger();
-
-    mg200_get_figer_num();
-
-    // mg200_send(0x54, 0x00);
-    // check_rec(mg200_rec());
-
     // ===== 待机唤醒识别(复位原因分流)=====
     // STANDBY 唤醒 = 整片复位,一切归零重跑;靠 WUF 标志认亲,分流出不同启动流程
     if (mcu_was_standby_wake()) // 长按 PC13 进待机 → 按 PA0 唤醒后走这里
