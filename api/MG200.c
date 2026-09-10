@@ -137,7 +137,16 @@ MG_rec_data mg200_rec(void)
 {
     MG_rec_data rec = {0};
 
-    rec.beg = usart6_rev_byte(); // 起始码
+
+    while(1)
+    {
+        rec.beg = usart6_rev_byte();// 起始码
+        if (rec.beg==0x6c)
+        {
+            break;
+        }
+        
+    } 
 
     rec.send_addr = usart6_rev_byte(); // 发送地址
 
