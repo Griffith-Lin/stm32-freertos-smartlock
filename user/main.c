@@ -77,9 +77,9 @@ int main()
     LCD_Init();
     mg200_Config(115200);
 
-
+    Delay_Ms(2000);
     MG_rec_data rec = {0};
-    mg200_send(0x58, 0); 
+    mg200_send(0x58, 0);    
     rec = mg200_rec();
     if (rec.valid)
     {
