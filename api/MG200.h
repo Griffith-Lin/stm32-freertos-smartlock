@@ -35,8 +35,7 @@ MG_rec_data mg200_rec(void);
 uint8_t check_rec(MG_rec_data rec);
 
 void mg200_add_finger(void);
-
 void mg200_get_figer_num(void);
-
 void mg200_erase_all(void);
+void mg200_compare(void);
 #endif

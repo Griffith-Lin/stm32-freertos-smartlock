@@ -55,13 +55,11 @@ void mg200_Config(uint32_t brr)
     usart_InitTypeDef.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
     usart_InitTypeDef.USART_Mode = USART_Mode_Rx | USART_Mode_Tx;
 
-
-
     USART_Init(USART6, &usart_InitTypeDef);
 
     USART_Cmd(USART6, ENABLE);
 
-    Delay_Ms(1000);//等待指纹模块启动
+    Delay_Ms(1000); // 等待指纹模块启动
 }
 
 void usart6_send_byte(uint8_t byte)
@@ -130,23 +128,20 @@ void mg200_send(uint8_t cmd, uint8_t para)
 
     crc = 0x63 + 0x62 + cmd + para;
     usart6_send_byte(crc); // 校验和
-
 }
 
 MG_rec_data mg200_rec(void)
 {
     MG_rec_data rec = {0};
 
-
-    while(1)
+    while (1)
     {
-        rec.beg = usart6_rev_byte();// 起始码
-        if (rec.beg==0x6c)
+        rec.beg = usart6_rev_byte(); // 起始码
+        if (rec.beg == 0x6c)
         {
             break;
         }
-        
-    } 
+    }
 
     rec.send_addr = usart6_rev_byte(); // 发送地址
 
@@ -171,13 +166,12 @@ MG_rec_data mg200_rec(void)
     return rec;
 }
 
-
 uint8_t check_rec(MG_rec_data rec)
 {
     if (rec.valid)
     {
         printf("MG200 ACK cmd=%02X result=%02X para=%02X\r\n",
-               rec.cmd, rec.result,rec.para);
+               rec.cmd, rec.result, rec.para);
         return 1;
     }
     else
@@ -191,43 +185,40 @@ uint8_t check_rec(MG_rec_data rec)
     }
 }
 
-
 void mg200_add_finger(void)
 {
-    uint8_t count=0;   
-    uint8_t put_hint=0;
+    uint8_t count = 0;
+    uint8_t put_hint = 0;
     while (1)
     {
-        if(put_hint==0)
+        if (put_hint == 0)
         {
             printf("请放下手指 \r\n");
-            put_hint=1;
+            put_hint = 1;
         }
-        
 
-        if(GPIO_ReadInputDataBit(GPIOC,GPIO_Pin_0)==SET && count<3)
-        {          
-            mg200_send(0x51, count);//提取特征码
-            if(check_rec(mg200_rec()))
+        if (GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_0) == SET && count < 3)
+        {
+            mg200_send(0x51, count); // 提取特征码
+            if (check_rec(mg200_rec()))
             {
-               count++;     
+                count++;
             }
             else
             {
                 printf("重新来 \r\n");
-            }
-            ;
-            
+            };
 
             printf("请松手 \r\n");
-            put_hint=0;
-            while(GPIO_ReadInputDataBit(GPIOC,GPIO_Pin_0)==SET);
+            put_hint = 0;
+            while (GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_0) == SET)
+                ;
         }
 
-        if(count==3)
+        if (count == 3)
         {
-            mg200_send(0x7f, 0);//注册用户
-            if(check_rec(mg200_rec()))
+            mg200_send(0x7f, 0); // 注册用户
+            if (check_rec(mg200_rec()))
             {
                 printf("添加成功 \r\n");
             }
@@ -238,41 +229,94 @@ void mg200_add_finger(void)
 
             break;
         }
-        
     }
 }
-
-
 
 void mg200_get_figer_num(void)
 {
     MG_rec_data rec;
 
-    mg200_send(0x55,0);
-    rec=mg200_rec();
-    if(check_rec(rec))
+    mg200_send(0x55, 0);
+    rec = mg200_rec();
+    if (check_rec(rec))
     {
-        printf("指纹数为%d \r\n",rec.para);
+        printf("指纹数为%d \r\n", rec.para);
     }
     else
     {
         printf("失败 \r\n");
     }
-    
 }
 
 void mg200_erase_all(void)
 {
     MG_rec_data rec;
 
-    mg200_send(0x54,0);
-    rec=mg200_rec();
-    if(check_rec(rec))
+    mg200_send(0x54, 0);
+    rec = mg200_rec();
+    if (check_rec(rec))
     {
         printf("删除成功 \r\n");
     }
     else
     {
         printf("失败 \r\n");
+    }
+}
+
+void mg200_compare(void)
+{
+    MG_rec_data rec;
+    uint8_t count = 0;
+    uint8_t put_hint = 0;
+    while (1)
+    {
+        if (put_hint == 0)
+        {
+            printf("请放下手指 \r\n");
+            put_hint = 1;
+        }
+
+        if (GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_0) == SET && count < 3)
+        {
+            mg200_send(0x51, count); // 提取特征码
+            if (check_rec(mg200_rec()))
+            {
+                count++;
+            }
+            else
+            {
+                printf("重新来 \r\n");
+            };
+
+            printf("请松手 \r\n");
+            put_hint = 0;
+            while (GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_0) == SET)
+                ;
+        }
+
+        if (count == 1)
+        {
+            mg200_send(0x71, 0);
+            rec = mg200_rec();
+            if (check_rec(rec))
+            {
+                printf("进入比对 \r\n");
+                if (rec.result == 0)
+                {
+                    printf("比对成功 \r\n");
+                }
+                else
+                {
+                    printf("比对失败 \r\n");
+                }
+            }
+            else
+            {
+                printf("失败 \r\n");
+            }
+
+            break;
+        }
     }
 }
