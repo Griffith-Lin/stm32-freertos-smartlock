@@ -176,8 +176,8 @@ uint8_t check_rec(MG_rec_data rec)
 {
     if (rec.valid)
     {
-        printf("MG200 ACK cmd=%02X result=%02X \r\n",
-               rec.cmd, rec.result);
+        printf("MG200 ACK cmd=%02X result=%02X para=%02X\r\n",
+               rec.cmd, rec.result,rec.para);
         return 1;
     }
     else
@@ -240,4 +240,16 @@ void mg200_add_finger(void)
         }
         
     }
+}
+
+
+
+void mg200_get_figer_num(void)
+{
+    MG_rec_data rec;
+
+    mg200_send(0x55,0);
+    rec=mg200_rec();
+    check_rec(rec);
+    printf("指纹数为%d",rec.para);
 }

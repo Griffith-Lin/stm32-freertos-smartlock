@@ -36,4 +36,6 @@ uint8_t check_rec(MG_rec_data rec);
 
 void mg200_add_finger(void);
 
+void mg200_get_figer_num(void);
+
 #endif

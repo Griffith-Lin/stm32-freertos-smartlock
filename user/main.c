@@ -77,7 +77,9 @@ int main()
     LCD_Init();
     mg200_Config(115200);
 
-    mg200_add_finger();
+    // mg200_add_finger();
+
+    mg200_get_figer_num();
 
     // mg200_send(0x54, 0x00);
     // check_rec(mg200_rec());
