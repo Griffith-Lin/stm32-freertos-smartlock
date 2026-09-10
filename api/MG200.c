@@ -200,7 +200,7 @@ void mg200_add_finger(void)
     {
         if(put_hint==0)
         {
-            printf("请放下手指\r\n");
+            printf("请放下手指 \r\n");
             put_hint=1;
         }
         
@@ -214,12 +214,12 @@ void mg200_add_finger(void)
             }
             else
             {
-                printf("重新来\r\n");
+                printf("重新来 \r\n");
             }
             ;
             
 
-            printf("请松手\r\n");
+            printf("请松手 \r\n");
             put_hint=0;
             while(GPIO_ReadInputDataBit(GPIOC,GPIO_Pin_0)==SET);
         }
@@ -229,11 +229,11 @@ void mg200_add_finger(void)
             mg200_send(0x7f, 0);//注册用户
             if(check_rec(mg200_rec()))
             {
-                printf("添加成功\r\n");
+                printf("添加成功 \r\n");
             }
             else
             {
-                printf("添加失败\r\n");
+                printf("添加失败 \r\n");
             };
 
             break;
@@ -250,6 +250,29 @@ void mg200_get_figer_num(void)
 
     mg200_send(0x55,0);
     rec=mg200_rec();
-    check_rec(rec);
-    printf("指纹数为%d",rec.para);
+    if(check_rec(rec))
+    {
+        printf("指纹数为%d \r\n",rec.para);
+    }
+    else
+    {
+        printf("失败 \r\n");
+    }
+    
+}
+
+void mg200_erase_all(void)
+{
+    MG_rec_data rec;
+
+    mg200_send(0x54,0);
+    rec=mg200_rec();
+    if(check_rec(rec))
+    {
+        printf("删除成功 \r\n");
+    }
+    else
+    {
+        printf("失败 \r\n");
+    }
 }

@@ -38,4 +38,5 @@ void mg200_add_finger(void);
 
 void mg200_get_figer_num(void);
 
+void mg200_erase_all(void);
 #endif
