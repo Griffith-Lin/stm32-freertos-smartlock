@@ -77,24 +77,10 @@ int main()
     LCD_Init();
     mg200_Config(115200);
 
-    Delay_Ms(2000);
-    MG_rec_data rec = {0};
-    mg200_send(0x58, 0);    
-    rec = mg200_rec();
-    if (rec.valid)
-    {
-        printf("MG200 ACK cmd=%02X result=%02X OEM_ID=%u\r\n",
-               rec.cmd, rec.result, (uint16_t)(rec.para | (rec.reserve << 8)));
-    }
-    else
-    {
-        printf("MG200 invalid: %02X %02X %02X %02X %02X %02X %02X %02X calc=%02X\r\n",
-               rec.beg, rec.send_addr, rec.rec_addr, rec.cmd, rec.result,
-               rec.para, rec.reserve, rec.crc,
-               (uint8_t)(rec.send_addr + rec.rec_addr + rec.cmd + rec.result +
-                         rec.para + rec.reserve));
-    }
-    
+    mg200_add_finger();
+
+    // mg200_send(0x54, 0x00);
+    // check_rec(mg200_rec());
 
     // ===== 待机唤醒识别(复位原因分流)=====
     // STANDBY 唤醒 = 整片复位,一切归零重跑;靠 WUF 标志认亲,分流出不同启动流程

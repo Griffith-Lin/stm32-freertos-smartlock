@@ -60,6 +60,8 @@ void mg200_Config(uint32_t brr)
     USART_Init(USART6, &usart_InitTypeDef);
 
     USART_Cmd(USART6, ENABLE);
+
+    Delay_Ms(1000);//等待指纹模块启动
 }
 
 void usart6_send_byte(uint8_t byte)
@@ -158,4 +160,75 @@ MG_rec_data mg200_rec(void)
                                       rec.para + rec.reserve));
 
     return rec;
+}
+
+
+uint8_t check_rec(MG_rec_data rec)
+{
+    if (rec.valid)
+    {
+        printf("MG200 ACK cmd=%02X result=%02X \r\n",
+               rec.cmd, rec.result);
+        return 1;
+    }
+    else
+    {
+        printf("MG200 invalid: %02X %02X %02X %02X %02X %02X %02X %02X calc=%02X\r\n",
+               rec.beg, rec.send_addr, rec.rec_addr, rec.cmd, rec.result,
+               rec.para, rec.reserve, rec.crc,
+               (uint8_t)(rec.send_addr + rec.rec_addr + rec.cmd + rec.result +
+                         rec.para + rec.reserve));
+        return 0;
+    }
+}
+
+
+void mg200_add_finger(void)
+{
+    uint8_t count=0;   
+    uint8_t put_hint=0;
+    while (1)
+    {
+        if(put_hint==0)
+        {
+            printf("请放下手指\r\n");
+            put_hint=1;
+        }
+        
+
+        if(GPIO_ReadInputDataBit(GPIOC,GPIO_Pin_0)==SET && count<3)
+        {          
+            mg200_send(0x51, count);//提取特征码
+            if(check_rec(mg200_rec()))
+            {
+               count++;     
+            }
+            else
+            {
+                printf("重新来\r\n");
+            }
+            ;
+            
+
+            printf("请松手\r\n");
+            put_hint=0;
+            while(GPIO_ReadInputDataBit(GPIOC,GPIO_Pin_0)==SET);
+        }
+
+        if(count==3)
+        {
+            mg200_send(0x7f, 0);//注册用户
+            if(check_rec(mg200_rec()))
+            {
+                printf("添加成功\r\n");
+            }
+            else
+            {
+                printf("添加失败\r\n");
+            };
+
+            break;
+        }
+        
+    }
 }
