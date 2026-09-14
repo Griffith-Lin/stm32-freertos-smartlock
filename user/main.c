@@ -76,10 +76,9 @@ int main()
     spi1_w25_Config();
     LCD_Init();
     mg200_Config(115200);
+    i2c_master_Config();
+    CY9CM_Init(); // RES 复位脉冲 + (必要时)写 128 字节配置
 
-
-    // mg200_add_finger();
-    mg200_compare();
 
     // ===== 待机唤醒识别(复位原因分流)=====
     // STANDBY 唤醒 = 整片复位,一切归零重跑;靠 WUF 标志认亲,分流出不同启动流程
@@ -91,6 +90,7 @@ int main()
 
     // ===== 业务任务 =====
     key_tasks_init(); // 按键:建事件队列 + 创建 key_scan(生产)/ key_action(消费) 两个任务
+    cy9cm_tasks_init();
 
     // ===== 学习演示任务(与业务无关,平时可整组注释) =====
     // learn_tasks_init();

@@ -32,7 +32,6 @@ virtualFolder:
         - path: api/w25qxx.h
         - path: api/spi.c
         - path: api/key.c
-        - path: api/key.h
         - path: api/dma.c
         - path: api/lcd.c
         - path: api/debug.c
@@ -41,7 +40,10 @@ virtualFolder:
         - path: api/MG200.c
         - path: api/MG200.h
         - path: api/mcu_wake.c
-        - path: api/mcu_wake.h
+        - path: api/i2c.c
+        - path: api/i2c.h
+        - path: api/CY9CM.c
+        - path: api/CY9CM.h
       folders: []
     - name: startup
       files:
@@ -137,7 +139,8 @@ targets:
         - freertos/include
         - freertos/port
       libList: []
-    excludeList: []
+    excludeList:
+      - <virtual_root>/api/CY8CM.c
     settings:
       debugger: cortex-debug
     toolchain: AC5

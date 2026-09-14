@@ -16,7 +16,7 @@
 #include "lcd.h"
 #include "debug.h"
 #include "MG200.h"
-
+#include "CY9CM.h"
 
 #endif
 
