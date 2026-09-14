@@ -29,7 +29,6 @@ virtualFolder:
         - path: api/delay.c
         - path: api/tim.c
         - path: api/w25qxx.c
-        - path: api/w25qxx.h
         - path: api/spi.c
         - path: api/key.c
         - path: api/dma.c
@@ -41,9 +40,10 @@ virtualFolder:
         - path: api/MG200.h
         - path: api/mcu_wake.c
         - path: api/i2c.c
-        - path: api/i2c.h
         - path: api/CY9CM.c
         - path: api/CY9CM.h
+        - path: api/AT24C04.c
+        - path: api/AT24C04.h
       folders: []
     - name: startup
       files:
