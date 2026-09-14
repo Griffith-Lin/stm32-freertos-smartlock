@@ -76,8 +76,9 @@ int main()
     spi1_w25_Config();
     LCD_Init();
     mg200_Config(115200);
-    i2c_master_Config();
-    CY9CM_Init(); // RES 复位脉冲 + (必要时)写 128 字节配置
+    i2c_bus_config(&i2c_bus_cy9cm);   // CY8CMBR3116 按键:SCL=PB6 SDA=PB7
+    i2c_bus_config(&i2c_bus_at24c04); // AT24C04A EEPROM:SCL=PA8 SDA=PC9
+    CY9CM_Init();                     // RES 复位脉冲 + (必要时)写 128 字节配置
 
 
     // ===== 待机唤醒识别(复位原因分流)=====
@@ -85,7 +86,7 @@ int main()
     if (mcu_was_standby_wake()) // 长按 PC13 进待机 → 按 PA0 唤醒后走这里
     {
         printf("wake from STANDBY!\r\n"); // 冷启动不会打印这一行
-        LED_BLUE_toggle();                // 亮绿灯标记"我从待机醒来"(冷启动保持灭)
+        LED_BLUE_toggle();                // 亮蓝灯标记"我从待机醒来"(冷启动保持灭)
     }
 
     // ===== 业务任务 =====
