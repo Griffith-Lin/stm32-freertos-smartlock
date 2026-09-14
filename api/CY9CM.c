@@ -52,8 +52,8 @@ static uint8_t cy9cm_wait_addr(uint8_t addr_byte)
 
     for (i = 0; i < CY9CM_ADDR_RETRY; i++)
     {
-        if (i) i2c_master_start();                      // 重试 = 重新发 START
-        if (i2c_master_write(addr_byte)) return 1;      // 收到 ACK
+        if (i) i2c_master_start(&i2c_bus_cy9cm);                      // 重试 = 重新发 START
+        if (i2c_master_write(&i2c_bus_cy9cm,addr_byte)) return 1;      // 收到 ACK
     }
     return 0;
 }
@@ -68,23 +68,23 @@ static uint8_t cy9cm_wait_addr(uint8_t addr_byte)
  */
 uint8_t CY9CM_WriteData(uint8_t reg, uint8_t len, const uint8_t *data)
 {
-    i2c_master_start();
+    i2c_master_start(&i2c_bus_cy9cm);
 
-    if (!cy9cm_wait_addr(CY9CM_ADDR_W)) { i2c_master_stop(); return 3; }
+    if (!cy9cm_wait_addr(CY9CM_ADDR_W)) { i2c_master_stop(&i2c_bus_cy9cm); return 3; }
 
     Delay_Us(CY9CM_BYTE_GAP_US);
 
-    if (!i2c_master_write(reg)) { i2c_master_stop(); return 1; }
+    if (!i2c_master_write(&i2c_bus_cy9cm,reg)) { i2c_master_stop(&i2c_bus_cy9cm); return 1; }
 
     Delay_Us(CY9CM_BYTE_GAP_US);
 
     while (len--)
     {
-        if (!i2c_master_write(*data++)) { i2c_master_stop(); return 2; }
+        if (!i2c_master_write(&i2c_bus_cy9cm,*data++)) { i2c_master_stop(&i2c_bus_cy9cm); return 2; }
         Delay_Us(CY9CM_BYTE_GAP_US);
     }
 
-    i2c_master_stop();
+    i2c_master_stop(&i2c_bus_cy9cm);
     return 0;
 }
 
@@ -102,28 +102,28 @@ uint8_t CY9CM_ReadData(uint8_t reg, uint8_t len, uint8_t *data)
 {
     uint8_t i;
 
-    i2c_master_start();
-    if (!cy9cm_wait_addr(CY9CM_ADDR_W)) { i2c_master_stop(); return 3; }
+    i2c_master_start(&i2c_bus_cy9cm);
+    if (!cy9cm_wait_addr(CY9CM_ADDR_W)) { i2c_master_stop(&i2c_bus_cy9cm); return 3; }
 
     Delay_Us(CY9CM_BYTE_GAP_US);
 
-    if (!i2c_master_write(reg)) { i2c_master_stop(); return 1; }
+    if (!i2c_master_write(&i2c_bus_cy9cm,reg)) { i2c_master_stop(&i2c_bus_cy9cm); return 1; }
 
     Delay_Us(CY9CM_BYTE_GAP_US);
 
-    i2c_master_stop();                                  // 第一段事务到此结束
+    i2c_master_stop(&i2c_bus_cy9cm);                                  // 第一段事务到此结束
 
-    i2c_master_start();                                 // 第二段:读
+    i2c_master_start(&i2c_bus_cy9cm);                                 // 第二段:读
 
-    if (!cy9cm_wait_addr(CY9CM_ADDR_R)) { i2c_master_stop(); return 3; }
+    if (!cy9cm_wait_addr(CY9CM_ADDR_R)) { i2c_master_stop(&i2c_bus_cy9cm); return 3; }
 
     for (i = 0; i < len; i++)
     {
         // 最后一个字节回 NACK,其余回 ACK
-        data[i] = i2c_master_read((i == (uint8_t)(len - 1)) ? 0 : 1);
+        data[i] = i2c_master_read(&i2c_bus_cy9cm,(i == (uint8_t)(len - 1)) ? 0 : 1);
     }
 
-    i2c_master_stop();
+    i2c_master_stop(&i2c_bus_cy9cm);
     return 0;
 }
 
@@ -229,7 +229,7 @@ void CY9CM_RegConfig(uint8_t set_mode)
 
 /**
  * @brief  CY8CMBR3116 完整初始化
- * @note   必须在 i2c_master_Config() 之后调用。
+ * @note   必须在 i2c_bus_config(&i2c_bus_cy9cm) 之后调用。
  *         先给一个 RES 复位脉冲让芯片从确定状态启动,再按需写配置。
  */
 void CY9CM_Init(void)
@@ -309,7 +309,7 @@ uint8_t CY9CM_KeyScan(void)
 
 static void cy9cm_scan_task(void *pvParameters)
 {
-    (void)pvParameters;                 // 消除"参数未使用"告警
+    
 
     for (;;)
     {
