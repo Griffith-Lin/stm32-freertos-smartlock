@@ -93,12 +93,12 @@ int main()
     key_tasks_init(); // 按键:建事件队列 + 创建 key_scan(生产)/ key_action(消费) 两个任务
     cy9cm_tasks_init();
 
-    // ===== 学习演示任务(与业务无关,平时可整组注释) =====
+    // ===== 学习演示任务(与业务无关) =====
     // learn_tasks_init();
 
     vTaskStartScheduler(); // 启动调度器,正常情况下不返回
 
-    printf("sched returned!\r\n"); // ← 打到这=启动失败
+    printf("sched returned!\r\n"); // 调度器返回了，启动失败
     for (;;)
         ;
 }

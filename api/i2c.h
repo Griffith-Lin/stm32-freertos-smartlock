@@ -35,7 +35,7 @@ extern const i2c_bus_t i2c_bus_at24c04;  // AT24C04A EEPROM   :SCL=PA8 SDA=PC9
  */
 void i2c_bus_config(const i2c_bus_t *bus);
 
-// 下面这些函数都要显式传 bus,别再写成不带参数的老样子
+// 下面这些函数都要显式传 bus
 void i2c_master_ack(const i2c_bus_t *bus, uint8_t ack);
 uint8_t i2c_master_wait_ack(const i2c_bus_t *bus);
 

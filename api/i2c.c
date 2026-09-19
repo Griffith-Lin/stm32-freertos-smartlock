@@ -57,6 +57,15 @@ static uint8_t i2c_sda_read(const i2c_bus_t *bus)
 {
     return (bus->sda_port->IDR & bus->sda_pin) ? 1 : 0;
 }
+/*
+① bus->sda_port->IDR —— 顺着端口指针取 IDR(Input Data Register)成员。它在结构体里的偏移是 0x10,所以对 AT24C04 来说地址是 0x40020800 + 0x10 = 0x40020810。
+
+它返回整个端口的 16 个引脚电平,每一位对应一根脚。
+
+② & bus->sda_pin —— 按位与,把不关心的位全部清 0,只留下 SDA 那一位。
+
+③ ? 1 : 0 —— 把结果归一到恰好 1 或 0
+*/
 
 
 /**
