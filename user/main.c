@@ -1,4 +1,4 @@
-#include "main.h"
+﻿#include "main.h"
 #include "FreeRTOS.h"
 #include "learn.h"    // 学习演示任务(learn.c):互斥量/计数信号量/LCD测试等,与业务无关
 #include "mcu_wake.h" // PA0 待机唤醒(业务)
@@ -82,13 +82,14 @@ int main()
     i2c_bus_config(&i2c_bus_at24c04); // AT24C04A EEPROM:SCL=PA8 SDA=PC9
     CY9CM_Init();                     // RES 复位脉冲 + (必要时)写 128 字节配置
 
-    
     // 密码锁:从 EEPROM 载入密码(首次上电写默认值),然后画出输入界面。
     // 必须在调度器起来之前调用 —— 首次上电会走一次 EEPROM 写,而那是忙等。
     lock_init();
-
    
+    NV400F_Init();
+    NV400F_DelayUs(300000); // 等模块上电初始化:手册要求 >200ms,这里给 300ms
 
+    
     // ===== 待机唤醒识别(复位原因分流)=====
     // STANDBY 唤醒 = 整片复位,一切归零重跑;靠 WUF 标志认亲,分流出不同启动流程
     if (mcu_was_standby_wake()) // 长按 PC13 进待机 → 按 PA0 唤醒后走这里
@@ -97,10 +98,13 @@ int main()
         LED_BLUE_toggle();                // 亮蓝灯标记"我从待机醒来"(冷启动保持灭)
     }
 
+    
+
     // ===== 业务任务 =====
     key_tasks_init(); // 按键:建事件队列 + 创建 key_scan(生产)/ key_action(消费) 两个任务
     cy9cm_tasks_init(); // 触摸板:建按键事件队列 + 创建扫描任务
     lock_tasks_init();  // 密码锁:消费触摸板按键,校验密码后驱动电机开锁
+    finger_tasks_init(); // 指纹锁:轮询 MG200 的 DETECT 脚,比对通过后走同一个开锁流程
 
     // ===== 学习演示任务(与业务无关) =====
     // learn_tasks_init();

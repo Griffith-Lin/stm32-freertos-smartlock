@@ -18,6 +18,8 @@
 #include "MG200.h"
 #include "CY9CM.h"
 #include "lock.h"
+#include "finger.h"
+#include "NV400.h"
 
 #endif
 
