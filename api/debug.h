@@ -7,4 +7,5 @@
 
 
 void die(uint16_t n);
+void font_test(void);
 #endif
