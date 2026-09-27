@@ -17,6 +17,7 @@
 #include "debug.h"
 #include "MG200.h"
 #include "CY9CM.h"
+#include "lock.h"
 
 #endif
 
