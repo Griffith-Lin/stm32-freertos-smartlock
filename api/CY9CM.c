@@ -307,18 +307,32 @@ uint8_t CY9CM_KeyScan(void)
 }
 
 
+// 触摸板按键事件队列:本驱动只负责"产生事件",谁来处理由业务层决定
+QueueHandle_t cy9cm_key_queue = NULL;
+
+
 static void cy9cm_scan_task(void *pvParameters)
 {
-    
+    uint8_t key;
 
     for (;;)
     {
-        CY9CM_KeyScan();
+        key = CY9CM_KeyScan();
+
+        // CY9CM_KeyScan() 只在"刚按下"的那一次返回键字符,其余时候返回 NONE,
+        // 所以这里不用再做去重。队列满就丢(超时给 0,绝不在这里阻塞)——
+        // 按键事件丢掉一个没有损失,但扫描任务卡住会让整个触摸板失灵。
+        if (key != CY9CM_KEY_NONE)
+        {
+            xQueueSend(cy9cm_key_queue, &key, 0);
+        }
+
         vTaskDelay(pdMS_TO_TICKS(10));  // 必须用 vTaskDelay,不能用 Delay_Ms
     }
 }
 
 void cy9cm_tasks_init(void)
 {
-      xTaskCreate(cy9cm_scan_task, "cy9cm_scan", 256, NULL, 2, NULL);
+    cy9cm_key_queue = xQueueCreate(8, sizeof(uint8_t)); // 8 个按键事件缓冲
+    xTaskCreate(cy9cm_scan_task, "cy9cm_scan", 256, NULL, 2, NULL);
 }
