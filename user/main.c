@@ -99,6 +99,8 @@ int main()
     }
 
     
+    mg200_get_figer_num();
+
 
     // ===== 业务任务 =====
     key_tasks_init(); // 按键:建事件队列 + 创建 key_scan(生产)/ key_action(消费) 两个任务

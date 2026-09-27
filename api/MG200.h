@@ -1,4 +1,4 @@
-#ifndef __MG200_
+﻿#ifndef __MG200_
 #define __MG200_
 
 #include "stm32f4xx.h"
@@ -38,4 +38,16 @@ void mg200_add_finger(void);
 void mg200_get_figer_num(void);
 void mg200_erase_all(void);
 void mg200_compare(void);
+
+/**
+ * @brief  带超时的收帧(放进 FreeRTOS 任务里必须用这个,不能用 mg200_rec)
+ * @param  rec        输出:收到的应答
+ * @param  timeout_ms 从开始找帧头算起的**总**超时,单位 ms
+ * @return 1 = 收满了 8 个字节(是否合法看 rec->valid 或 check_rec())
+ *         0 = 超时,rec 里的内容不可信
+ * @note   mg200_rec() 内部是 while(1) 死等。裸机阶段无所谓,但放进任务后,
+ *         模块一旦不应答(没接、没供电、波特率不对),任务就永远卡在那条
+ *         语句上出不来。本函数用 TIM10 的 1ms 时基计时,超时立刻返回。
+ */
+uint8_t mg200_rec_timeout(MG_rec_data *rec, uint32_t timeout_ms);
 #endif

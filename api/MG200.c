@@ -1,4 +1,5 @@
-#include "MG200.h"
+﻿#include "MG200.h"
+#include "tim.h" // GetTim10Tick():mg200_rec_timeout() 靠它计时
 
 //   DETECT  PC0  手指触摸传感器时输出高电平 → 下拉输入(空闲为低)
 //   TXD     PC7  模块 TXD 进 MCU,USART6_RX → 复用输入
@@ -130,6 +131,22 @@ void mg200_send(uint8_t cmd, uint8_t para)
     usart6_send_byte(crc); // 校验和
 }
 
+/**
+ * @brief  判断一帧是否合法:帧头 + 收发地址 + 校验和
+ * @param  rec 已填好各字段的帧
+ * @return 1 = 合法
+ * @note   校验和 = 发送地址~最后一个数据字节之和的低 8 位。
+ *         模块回的帧里发送地址是 0x62、接收地址是 0x63(和上位机发出去时相反)。
+ */
+static uint8_t mg200_frame_valid(const MG_rec_data *rec)
+{
+    return (rec->beg == 0x6C &&
+            rec->send_addr == 0x62 &&
+            rec->rec_addr == 0x63 &&
+            rec->crc == (uint8_t)(0x62 + 0x63 + rec->cmd + rec->result +
+                                  rec->para + rec->reserve));
+}
+
 MG_rec_data mg200_rec(void)
 {
     MG_rec_data rec = {0};
@@ -157,13 +174,67 @@ MG_rec_data mg200_rec(void)
 
     rec.crc = usart6_rev_byte(); // 校验和
 
-    rec.valid = (rec.beg == 0x6C &&
-                 rec.send_addr == 0x62 &&
-                 rec.rec_addr == 0x63 &&
-                 rec.crc == (uint8_t)(0x62 + 0x63 + rec.cmd + rec.result +
-                                      rec.para + rec.reserve));
+    rec.valid = mg200_frame_valid(&rec);
 
     return rec;
+}
+
+/**
+ * @brief  等一个字节,超时就走人(不返回 0 的话任务会永远卡在这)
+ * @param  out        收到的字节
+ * @param  start      起始时刻,来自 GetTim10Tick()
+ * @param  timeout_ms 允许多久
+ * @return 1 = 收到了;0 = 到点还没来
+ */
+static uint8_t usart6_rev_byte_timeout(uint8_t *out, uint32_t start, uint32_t timeout_ms)
+{
+    while (!USART_GetFlagStatus(USART6, USART_FLAG_RXNE))
+    {
+        if ((GetTim10Tick() - start) > timeout_ms)
+        {
+            return 0;
+        }
+    }
+
+    *out = USART_ReceiveData(USART6);
+    return 1;
+}
+
+uint8_t mg200_rec_timeout(MG_rec_data *rec, uint32_t timeout_ms)
+{
+    uint32_t start = GetTim10Tick();
+    MG_rec_data r = {0};
+    uint8_t b;
+
+    /* 1. 先同步帧头:模块上电毛刺会在 RX 里留杂字节,必须逐字节找到 0x6C
+          才继续,否则整帧会永久右移一个字节且错位不自愈 */
+    do
+    {
+        if (!usart6_rev_byte_timeout(&b, start, timeout_ms))
+        {
+            *rec = r;
+            return 0;
+        }
+    } while (b != 0x6C);
+
+    r.beg = b;
+
+    /* 2. 后面固定还有 7 个字节,共用同一个总时限 */
+    if (!usart6_rev_byte_timeout(&r.send_addr, start, timeout_ms) ||
+        !usart6_rev_byte_timeout(&r.rec_addr, start, timeout_ms) ||
+        !usart6_rev_byte_timeout(&r.cmd, start, timeout_ms) ||
+        !usart6_rev_byte_timeout(&r.result, start, timeout_ms) ||
+        !usart6_rev_byte_timeout(&r.para, start, timeout_ms) ||
+        !usart6_rev_byte_timeout(&r.reserve, start, timeout_ms) ||
+        !usart6_rev_byte_timeout(&r.crc, start, timeout_ms))
+    {
+        *rec = r;
+        return 0;
+    }
+
+    r.valid = mg200_frame_valid(&r);
+    *rec = r;
+    return 1;
 }
 
 uint8_t check_rec(MG_rec_data rec)
