@@ -44,6 +44,8 @@ virtualFolder:
         - path: api/CY9CM.h
         - path: api/AT24C04.c
         - path: api/AT24C04.h
+        - path: api/lock.c
+        - path: api/lock.h
       folders: []
     - name: startup
       files:
