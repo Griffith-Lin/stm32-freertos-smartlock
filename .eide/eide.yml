@@ -37,15 +37,17 @@ virtualFolder:
         - path: api/debug.h
         - path: api/io_bit.h
         - path: api/MG200.c
-        - path: api/MG200.h
         - path: api/mcu_wake.c
         - path: api/i2c.c
         - path: api/CY9CM.c
-        - path: api/CY9CM.h
         - path: api/AT24C04.c
-        - path: api/AT24C04.h
         - path: api/lock.c
         - path: api/lock.h
+        - path: api/NV400.c
+        - path: api/NV400.h
+        - path: api/finger.c
+        - path: api/wifi.c
+        - path: api/wifi.h
       folders: []
     - name: startup
       files:
