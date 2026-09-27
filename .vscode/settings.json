@@ -1,3 +1,4 @@
 {
-    "cmake.sourceDirectory": "G:/github/train2/freertos/include"
+    "cmake.sourceDirectory": "G:/github/train2/freertos/include",
+    "idf.currentSetup": "D:\\v5.4.4\\esp-idf"
 }
