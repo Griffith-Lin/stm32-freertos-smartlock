@@ -1,4 +1,4 @@
-#ifndef __LOCK_
+﻿#ifndef __LOCK_
 #define __LOCK_
 
 #include "stm32f4xx.h"
@@ -34,5 +34,37 @@ void lock_init(void);
  *         没按键时不占 CPU。依赖 cy9cm_tasks_init() 已经建好队列。
  */
 void lock_tasks_init(void);
+
+/**
+ * @brief  开锁 —— 所有开锁来源的公共出口(密码、指纹……都走这里)
+ * @param  title 开锁期间标题行显示的 ASCII 文字
+ * @param  color 标题颜色
+ * @return 1 = 本次真的开了锁;0 = 已有开锁流程在进行,本次请求被忽略
+ * @note   **互斥**:同一时刻只允许一个开锁流程,免得两个任务同时去推电机。
+ *         "检查 + 占用标志"这两步放在临界区里做 —— 中间只要被 SysTick 切走
+ *         一次,两个任务就可能都读到"没人开锁",然后一起去驱动 L9110S。
+ * @note   整个流程阻塞 LOCK_MOTOR_MS×2 + LOCK_OPEN_MS 毫秒,内部用
+ *         vTaskDelay 让出 CPU。**只能在任务里调用,不能在中断里调。**
+ */
+uint8_t lock_open(uint8_t *title, uint16_t color);
+
+/**
+ * @brief  只改标题行,不动锁(给指纹那种模块显示"没匹配上"之类的提示用)
+ * @param  title ASCII 文字,**至少 8 个字符**
+ * @param  color 颜色
+ * @note   为什么要求 8 个字符:LCD_Font_Dis_Ascii() 会把每个字符格子的每个
+ *         像素都写一遍(笔画写前景色、其余写背景色),所以只有"新文字不比旧
+ *         文字短"才盖得干净。标题行原本是 "PASSWORD" 8 个字符,传个短的
+ *         过去,右边会留下上一行标题的残影 —— 短了就用空格补齐。
+ */
+void lock_lcd_set_title(uint8_t *title, uint16_t color);
+
+/**
+ * @brief  是否正在开锁/回锁
+ * @return 1 = 正在进行
+ * @note   给别的开锁来源做"预检",省得白采一次指纹再被 lock_open() 拒掉。
+ *         真正的仲裁仍然是 lock_open() 自己,**不能只靠这个判断**。
+ */
+uint8_t lock_is_busy(void);
 
 #endif

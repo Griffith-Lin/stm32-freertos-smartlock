@@ -42,6 +42,13 @@ static const uint8_t LOCK_DEFAULT_PWD[LOCK_PWD_LEN] = {
 #define LOCK_LCD_TITLE_SIZE 32
 #define LOCK_LCD_INPUT_SIZE 32
 
+// 密码错误的提示语。**必须凑够 8 个字符**:标题行原本是 "PASSWORD"(8 字符),
+// 而 LCD_Font_Dis_Ascii() 只把每个字符格子里的像素写一遍,新文字短了盖不掉
+// 旧的尾巴,右边会留下 "ORD" 残影。所以 "ERROR" 后面补 3 个空格凑满 8 个。
+// (finger.c 里的 "FINGER  " 是同一个道理)
+#define LOCK_LCD_ERROR_TEXT "ERROR   "
+#define LOCK_LCD_ERROR_MS   800     // 红字停留多久(ms)
+
 // ── 运行时状态 ──
 static uint8_t s_pwd[LOCK_PWD_LEN];     // 正确的密码,开机时从 EEPROM 载入 RAM
 static uint8_t s_input[LOCK_PWD_LEN];   // 用户已经输入的内容
@@ -94,6 +101,24 @@ static void lock_clear_input(void)
 {
     s_input_len = 0;
     lock_lcd_input();
+}
+
+/**
+ * @brief  在标题行闪一下红色的 ERROR,再恢复蓝色的 PASSWORD
+ * @note   必须在任务上下文调用(内部用 vTaskDelay 让出 CPU)。
+ *         这 800ms 里 lock_task 自己就停在本函数里,期间按的键会堆在
+ *         cy9cm_key_queue 里(队列深度 8),等回来后按顺序继续处理。
+ * @note   为什么不用 Delay_Ms():那是 NOP 忙等,会把 CPU 占死 800ms,
+ *         同优先级和低优先级的任务全部饿死 —— 和 lock_open() 里不用
+ *         L9110S_move() 是同一个原因。
+ */
+static void lock_lcd_show_error(void)
+{
+    lock_lcd_text(LOCK_LCD_TITLE_ROW, LOCK_LCD_TITLE_COL, LOCK_LCD_TITLE_SIZE,
+                  RED, WHITE, (uint8_t *)LOCK_LCD_ERROR_TEXT);
+    vTaskDelay(pdMS_TO_TICKS(LOCK_LCD_ERROR_MS));
+    lock_lcd_text(LOCK_LCD_TITLE_ROW, LOCK_LCD_TITLE_COL, LOCK_LCD_TITLE_SIZE,
+                  BLUE, WHITE, (uint8_t *)"PASSWORD");
 }
 
 
@@ -186,6 +211,17 @@ static void lock_input_digit(uint8_t digit)
 }
 
 
+void lock_lcd_set_title(uint8_t *title, uint16_t color)
+{
+    lock_lcd_text(LOCK_LCD_TITLE_ROW, LOCK_LCD_TITLE_COL, LOCK_LCD_TITLE_SIZE,
+                  color, WHITE, title);
+}
+
+uint8_t lock_is_busy(void)
+{
+    return s_unlocking;
+}
+
 /**
  * @brief  开锁:电机推出锁舌 → 停 3 秒 → 收回锁舌
  * @note   全程用 vTaskDelay 让出 CPU。
@@ -195,12 +231,21 @@ static void lock_input_digit(uint8_t digit)
  *         那就是"开锁期间按键没反应")。
  *         这和 AT24C04 里 Delay_Ms 要换成 vTaskDelay 是同一个道理。
  */
-static void lock_unlock(void)
+uint8_t lock_open(uint8_t *title, uint16_t color)
 {
+    /* 检查 + 占用标志一起放进临界区:如果分开写,中间被 SysTick 切走一次,
+       另一个开锁来源(比如指纹任务)就会读到"没人开锁",然后两边一起驱动电机 */
+    taskENTER_CRITICAL();
+    if (s_unlocking)
+    {
+        taskEXIT_CRITICAL();
+        printf("开锁/回锁进行中,本次请求忽略\r\n");
+        return 0;
+    }
     s_unlocking = 1;
+    taskEXIT_CRITICAL();
 
-    lock_lcd_text(LOCK_LCD_TITLE_ROW, LOCK_LCD_TITLE_COL, LOCK_LCD_TITLE_SIZE,
-                  GREEN, WHITE, (uint8_t *)"UNLOCKED");
+    lock_lcd_set_title(title, color);
     lock_clear_input();
 
     // 开锁行程:正转推到位,然后刹车停住(刹车比自由滑行可靠,锁舌不会溜回去)
@@ -218,18 +263,19 @@ static void lock_unlock(void)
 
     printf("已回锁\r\n");
 
-    lock_lcd_text(LOCK_LCD_TITLE_ROW, LOCK_LCD_TITLE_COL, LOCK_LCD_TITLE_SIZE,
-                  BLUE, WHITE, (uint8_t *)"PASSWORD");
+    lock_lcd_set_title((uint8_t *)"PASSWORD", BLUE);
     lock_clear_input();
 
     s_unlocking = 0;
+    return 1;
 }
 
 
 /**
  * @brief  按下 '#' :校验输入的密码
- * @note   位数不对也算错误,一并清空重输。
- *         按需求,密码错误只打印,不做界面处理。
+ * @note   位数不对也算错误,一并清空重输并显示红色 ERROR。
+ *         先清输入行再弹错误提示 —— 反过来的话,ERROR 停留的 800ms 里
+ *         下面那行的 '******' 还挂着,看着像是"密码还在,但已经错了"。
  */
 static void lock_verify(void)
 {
@@ -239,6 +285,7 @@ static void lock_verify(void)
     {
         printf("密码错误:只输了 %d 位,需要 %d 位\r\n", s_input_len, LOCK_PWD_LEN);
         lock_clear_input();
+        lock_lcd_show_error();
         return;
     }
 
@@ -248,12 +295,13 @@ static void lock_verify(void)
         {
             printf("密码错误\r\n");
             lock_clear_input();
+            lock_lcd_show_error();
             return;
         }
     }
 
     printf("密码正确\r\n");
-    lock_unlock();
+    lock_open((uint8_t *)"UNLOCKED", GREEN);
 }
 
 
