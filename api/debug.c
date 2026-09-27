@@ -1,16 +1,13 @@
 #include "debug.h"
 
-
-
-
 void font_test(void)
 {
-    //下载字库
+    // 下载字库
     DMA_Font_Config();
     Font_Load();
 
-    W25Qxx_Read_Bytes(0, font.buff[0], BUFFSIZE); //读取字库
-    for(int i = 0; i < BUFFSIZE; i++)
+    W25Qxx_Read_Bytes(0, font.buff[0], BUFFSIZE); // 读取字库
+    for (int i = 0; i < BUFFSIZE; i++)
     {
         printf("%02x ", font.buff[0][i]);
     }
@@ -29,15 +26,22 @@ void font_test(void)
     */
 }
 
-
 void die(uint16_t n)
 {
     char buf[100];
-    buf[0] = (char)n;        // 让编译器没法偷懒把这层纸删掉
+    buf[0] = (char)n; // 让编译器没法偷懒把这层纸删掉
     if (n > 0)
-        die(n - 1);          // 喊 n 次就一层层回头
+        die(n - 1); // 喊 n 次就一层层回头
 }
 
+void add_finger(void)
+{
+    mg200_add_finger();
+    while (1)
+    {
+        mg200_compare();
+    }
+}
 
 /* ==================== 字库 flash 全量回读(定位完即删) ==================== */
 #define FONT_DUMP_LEN 0x1D3800u /* 略大于 font_all.bin(0x1D3374),够覆盖整片字库 */
@@ -69,4 +73,24 @@ void font_dump(void)
     }
 
     printf("\r\n===DUMP END===\r\n");
+}
+
+void nv400f_test(void)
+{
+    static const u8 voice_test_addr[3] = {0x00, 0x01, 0x02};
+    u8 k = 0;
+
+    while (1)
+    {
+        printf("语音:发送地址 0x%02X\r\n", voice_test_addr[k]);
+        NV400F_SendCmd(voice_test_addr[k]);
+
+        k++;
+        if (k >= 3)
+        {
+            k = 0;
+        }
+
+        NV400F_DelayUs(2000000); // 命令间隔 2s,留出耳朵分辨的时间(手册只要求 >50ms)
+    }
 }
