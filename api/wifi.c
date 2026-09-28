@@ -1,24 +1,24 @@
 ﻿#include "wifi.h"
 #include "tim.h"        // GetTim10Tick():裸机计时用的 1ms 时基
 #include "lock.h"       // lock_post_cmd():把云端下发翻译成锁控命令
+#include "lcd.h"        // MAGENTA 等颜色宏(蓝牙配网时要往屏幕上打提示)
+#include "wifi_cfg.h"   // WiFi 名/密码存在 EEPROM 里,开机读、配网后写
 #include "FreeRTOS.h"
 #include "task.h"
 #include "stdio.h"
 #include "string.h"
 
 // ══════════════════════════════════════════════════════════════════════════
-//  分包平台参数(改这里就能换平台/换 WiFi,不用动逻辑)
+//  分包平台参数(改这里就能换平台,不用动逻辑)
 //
 //  下面这些是接入方给的接入信息,MQTT 的 Client ID 用 mqtt.fx 生成的那个。
 //  ⚠ 密码是明文躺在源码里的 —— 教学项目无所谓,真做产品要么编译期加密,
 //    要么出厂时写进 EEPROM 由用户自己配。
+//
+//  ⚠ WiFi 名和密码**已经不在这里了**。它们运行时存在 AT24C04 EEPROM 里
+//    (见 wifi_cfg.c),开机读出来连网,蓝牙配网配好之后由固件自己写回去。
+//    所以换网不用改代码、不用重新烧录,配一次网就够。
 // ══════════════════════════════════════════════════════════════════════════
-
-// ⚠ SSID 中间**有一个空格**:Windows 移动热点默认会把名字写成
-//   "<电脑名> <4位数字>"。空格在 AT 命令里是危险字符(参数本来靠逗号分隔),
-//   所以下面连 WiFi 的地方会特意把"带引号"的写法也备一份。
-#define WIFI_SSID           "DESKTOP-HTLNPUV 4127"
-#define WIFI_PASSWORD       "88888888"
 
 #define WIFI_MQTT_HOST      "sh-3-mqtt.iot-api.com"
 #define WIFI_MQTT_PORT      "1883"
@@ -52,10 +52,22 @@
 #define WIFI_T_WJAP_MS      25000   // 连 WiFi:可能要十几秒,给足
 #define WIFI_T_CONN_MS      15000   // 连 MQTT / 订阅
 #define WIFI_T_PUB_MS       5000    // 发一条消息
-#define WIFI_T_SCAN_MS      12000   // 扫描周围 AP(诊断用,要扫好几个信道,给足)
 
 #define WIFI_PUB_PERIOD_MS  10000   // 心跳周期:10s 一条
 #define WIFI_RETRY_MS       10000   // 联网失败后多久重试一次
+
+// ── 蓝牙配网(blufi)──
+//    手机装 esp BluFi App,连上模块开的热点,把 WiFi 名和密码发过去。
+//    见手册 4.1.16 AT+WCONFIG。
+#define WIFI_PROV_DEADLINE_MS  15000        // 开机多久还没连上 WiFi 就转蓝牙配网
+#define WIFI_PROV_NAME         "DoorLock"   // 广播名,手机搜到的就是它
+#define WIFI_T_PROV_MS         180000       // 配网窗口上限:最多等 3 分钟
+#define WIFI_T_PROV_POLL_MS    2000         // 配网期间多久查一次状态
+#define WIFI_PROV_SETTLE_MS    8000         // 窗口关闭后,再等多久判模块自己连上没有
+
+// 一次 AT+WJAP 至少得给这么多时间,否则连"发出去 + 模块回话"都不够,
+// 试了只会白发一条命令、留一个没人收的应答在缓冲里,把下一次读行搞乱。
+#define WIFI_MIN_TRY_MS     1000
 
 // ── 接收环形缓冲:ISR 往里放,任务从里取 ──
 //    为什么不用 MG200.c 那种"发完命令再逐字节轮询收"的写法?
@@ -79,16 +91,13 @@ static volatile uint32_t s_rx_drop = 0;     // 缓冲满被丢掉的字节数
 // 只看第二行等于只知道"失败了",不知道"为什么失败"。所以留一份给失败分支解读。
 static char s_at_prev[64];
 
-// ── 黑匣子:USART2 收到的字节原样留一份,写满为止,永不覆盖 ──
-//    为什么环形缓冲不够用? 因为正常路径下 wifi_task 会**实时把它抽干**并
-//    转发到 USART1 —— 事后 dump 环形缓冲,只能看到"此刻还没被读走"的几个
-//    字节,历史全没了。想离线复盘模块到底说过什么(比如扫描结果),就得有
-//    一份不被消费的副本。
-//    1KB 只够存一次完整的扫描列表;写满后停止记录,靠调试器读地址 dump 出来。
-//    不需要时删掉这个数组和 ISR 里那两行即可,不影响功能。
-#define WIFI_LOG_SIZE       1024
-static volatile uint8_t  s_log[WIFI_LOG_SIZE];
-static volatile uint16_t s_log_len = 0;
+// ── "自动配网试过了吗" ──
+//    触发条件是 "开机过了 15 秒 && 还没连上",而这个条件**过点之后永远为真**。
+//    没有这个标志拦着,"用户没掏手机"这条最常见的路径就会:配网超时 → 下个循环
+//    条件依然成立 → 又进配网,每次卡 3 分钟,无限循环。设备就一直停在"可被配网"
+//    状态 —— 正好是这里最想避免的事。
+//    所以它是"尝试过"的意思,**不是**"配成了"(成不成只看 wifi_is_wifi_up())。
+static uint8_t s_prov_tried = 0;
 
 
 /**
@@ -104,13 +113,6 @@ void USART2_IRQHandler(void)
     {
         uint8_t  b    = (uint8_t)USART_ReceiveData(USART2); // 读 DR 顺带清 RXNE
         uint16_t next = (uint16_t)((s_rx_head + 1) % WIFI_RX_BUF_SIZE);
-
-        // 黑匣子:先进先出,写满就不再记(保留最早的一段,方便从开机看起)
-        if (s_log_len < WIFI_LOG_SIZE)
-        {
-            s_log[s_log_len] = b;
-            s_log_len++;
-        }
 
         if (next != s_rx_tail)
         {
@@ -394,56 +396,137 @@ static uint8_t wifi_is_wifi_up(void)
 
 
 /**
+ * @brief  算"开机 15 秒配网窗口"里还剩多少毫秒可以拿来连 WiFi
+ * @param  boot 开机时刻(GetTim10Tick() 取的)
+ * @return 剩余毫秒,最少给 WIFI_MIN_TRY_MS
+ * @note   为什么每次都要**现算**,不能进循环前算一次存着:
+ *         AT 探活 + AT+WMODE 这两步本身就可能花掉好几秒,拿循环开头那个值
+ *         会让这次连接多透支那几秒,配网就开晚了 —— "开机 15 秒"的承诺就破了。
+ * @note   下界兜到 WIFI_MIN_TRY_MS:算出来 0 的话连"发出去 + 模块回话"都不够,
+ *         白发一条命令还会留个没人收的应答在缓冲里,把下一次读行搞乱。
+ * @note   用无符号差值写,自动跨过 49.7 天的回绕。
+ */
+static uint32_t wifi_join_budget(uint32_t boot)
+{
+    uint32_t used = GetTim10Tick() - boot;
+    uint32_t left = (used >= WIFI_PROV_DEADLINE_MS) ? 0 : (WIFI_PROV_DEADLINE_MS - used);
+
+    return (left < WIFI_MIN_TRY_MS) ? WIFI_MIN_TRY_MS : left;
+}
+
+
+/**
  * @brief  连 WiFi:已经连着就不动,没连才发 AT+WJAP
- * @return 1 = WiFi 通了;0 = 没通(失败原因已打到控制台)
+ * @param  ssid       WiFi 名(从 EEPROM 读出来的)
+ * @param  pwd        密码
+ * @param  timeout_ms 这次最多等多久
+ * @return 1 = WiFi 通了;0 = 没通(模块的回话已打到控制台)
  * @note   为什么要先查一次 AT+WJAP? 而不是每次都直接连?
  *         有些固件在"已连接"状态下重发 WJAP 会报错,那样就把好好的连接
  *         误判成失败,陷入"明明能用却一直重连"的死循环。
+ * @note   发命令的缓冲够长就行:AT+WJAP= 是 8 个字符,加上 SSID 32 + 逗号 +
+ *         密码 63,一共 104 字节,下面留了 111。
  */
-static uint8_t wifi_wifi_join(void)
+static uint8_t wifi_wifi_join(const char *ssid, const char *pwd, uint32_t timeout_ms)
 {
+    char cmd[16 + WIFI_CFG_SSID_MAX + WIFI_CFG_PWD_MAX];
+
     if (wifi_is_wifi_up())
     {
-        printf("---- WiFi 已连接,跳过 ----\r\n");
+        printf("---- WiFi 已经连着,不用再连 ----\r\n");
         return 1;
     }
 
-    printf("---- 连接 WiFi: [%s] ----\r\n", WIFI_SSID);
-    s_at_prev[0] = '\0';
+    sprintf(cmd, "AT+WJAP=%s,%s", ssid, pwd);
 
-    // 写法一:裸写。手册 1.3 节只要求"参数里含**逗号**才必须加双引号",
-    // 空格理应原样保留 —— 按理说这样就够了。
-    if (wifi_at_cmd("AT+WJAP=" WIFI_SSID "," WIFI_PASSWORD, WIFI_T_WJAP_MS))
+    printf("---- 连接 WiFi: [%s] ----\r\n", ssid);
+    if (wifi_at_cmd(cmd, timeout_ms))
     {
         printf("---- WiFi 连上了 ----\r\n");
         return 1;
     }
 
     // 失败时别只说"失败了" —— 模块其实把原因告诉我们了,只是藏在一个数字里。
-    wifi_show_errno(s_at_prev);
+    // 报错行的格式是 "AT+WJAP:<错误码>",码表在手册 1.6 节
+    // (最常撞上的:66 扫到了但连不上 / 69 根本没扫到这个名字 / 74 STA 没在跑)。
+    printf("!! 连接失败,模块的回话:%s(码表见手册 1.6 节)\r\n", s_at_prev);
+    return 0;
+}
 
-    // 写法二:整个 SSID 加双引号。
-    // 为什么要多此一举? 因为有些固件的解析器会把参数**首尾的空格**当分隔符吃掉,
-    // 于是 "DESKTOP-HTLNPUV 4127" 被截成 "DESKTOP-HTLNPUV" ——
-    // 现象是最坑的一种:"我明明把名字写对了,就是连不上"。
-    // 引号能把整串锁死成一个参数,谁也吃不掉。手册给的失败码里没有"SSID 不匹配"
-    // 这一项(只区分 66 连不上 / 69 没扫到),从报错看是分辨不出来的,只能试。
-    printf("---- 再试一次(SSID 加双引号)----\r\n");
-    if (wifi_at_cmd("AT+WJAP=\"" WIFI_SSID "\"," WIFI_PASSWORD, WIFI_T_WJAP_MS))
+
+/**
+ * @brief  把模块当前连着的这个 WiFi 的名字和密码抄下来,存进 EEPROM
+ * @return 1 = 存好了;0 = 没问到 / 内容不对,没存
+ * @note   **蓝牙配网成功后必须调这个**,否则用户配的网下次上电就没了 ——
+ *         配网期间用户是用手机把凭据发给**模块**的,固件手里一个字都没有。
+ * @note   凭据从哪来:AT+WJAP? 的应答**明文带着 SSID 和密码**:
+ *             +WJAP:3,<ssid>,<pwd>,<bssid>,<加密>,<MAC>,<信道>,<IP>,<网关>
+ *         status 3 = 连上且拿到 IP,这时模块手里的凭据一定是可用的,
+ *         抄下来存进 EEPROM 比让用户再报一遍靠谱得多。
+ * @note   ⚠ 局限:SSID 或密码里**带逗号**的话会切错字段(协议就是这么定的,
+ *         AT 命令一律用逗号分隔参数)。家用场景基本不会遇到;
+ *         真遇到了就在 wifi_cfg_save() 里加一层长度校验挡住。
+ * @note   名字最长 32、密码最长 63,`+WJAP:3,` 8 个字符,加起来 104 ——
+ *         不会超出 wifi_at_ex() 里那个 128 字节的行缓冲,拿得到完整的行。
+ */
+static uint8_t wifi_ap_creds_save(void)
+{
+    char        cap[160];
+    char        ssid[WIFI_CFG_SSID_MAX + 1];
+    char        pwd[WIFI_CFG_PWD_MAX + 1];
+    const char *p;
+    uint16_t    i;
+
+    if (!wifi_at_ex("AT+WJAP?", "+WJAP:", cap, sizeof(cap), WIFI_T_AT_MS))
     {
-        printf("---- WiFi 连上了(引号写法)----\r\n");
-        return 1;
+        return 0;
     }
 
-    wifi_show_errno(s_at_prev);
+    p = strchr(cap, ':');
+    if (p == NULL)
+    {
+        return 0;
+    }
+    p++;
 
-    // 再扫一把周围有哪些 AP。扫描结果里带**信道号**:
-    // 1~14 是 2.4G,36 及以上是 5G —— 一眼就能看出是不是频段不对。
-    // 同时也能核对 SSID 的真实拼写(有没有多出空格、后缀之类)。
-    printf("---- 扫一下周围的 AP(信道 1~14 才是 2.4G)----\r\n");
-    wifi_at_cmd("AT+WSCAN", WIFI_T_SCAN_MS);
+    // ── 跳过 status 字段(手册排版里冒号后面可能有空格,两种都得认)──
+    while ((*p != '\0') && (*p != ','))
+    {
+        p++;
+    }
+    if (*p != ',')
+    {
+        return 0;
+    }
+    p++;
 
-    return 0;
+    // ── 第 2 个字段:SSID ──
+    i = 0;
+    while ((*p != '\0') && (*p != ',') && (i < WIFI_CFG_SSID_MAX))
+    {
+        ssid[i] = *p;
+        i++;
+        p++;
+    }
+    ssid[i] = '\0';
+
+    if ((*p != ',') || (i == 0))
+    {
+        return 0;   // 没有下一个字段(说明压根没连上),或者名字是空的
+    }
+    p++;
+
+    // ── 第 3 个字段:密码 ──
+    i = 0;
+    while ((*p != '\0') && (*p != ',') && (i < WIFI_CFG_PWD_MAX))
+    {
+        pwd[i] = *p;
+        i++;
+        p++;
+    }
+    pwd[i] = '\0';
+
+    return wifi_cfg_save(ssid, pwd);
 }
 
 
@@ -816,21 +899,292 @@ static void wifi_session(void)
 
 
 /**
+ * @brief  查模块当前的配网状态(手册 4.1.16 的 AT+WCONFIG?)
+ * @return >=0 = 手册里的 status;-1 = 查询失败
+ * @note   status 取值:0=配网任务已关闭 1=WiFi配网(esp touch) 2=蓝牙配网(esp BluFi)
+ *                       3=AirKiss  9=Blufi  10=WPS
+ *         配网期间只关心两件事:**还是 2(在配网中)** 和 **变成 0(窗口结束了)**。
+ * @note   为什么用"轮询状态"而不是"等 +EVENT:WIFI_GOT_IP"?
+ *         因为配网期间我们必须**持续发 AT+WCONFIG?** 才知道窗口还在不在,
+ *         而串口的行是谁先读谁拿走 —— 两个函数交替读同一个环形缓冲,
+ *         必然会把对方的应答吃掉,两边的超时全乱。
+ * @note   ⚠ 这个状态**只能说明模块的配网任务开没开,说明不了配网成没成**。
+ *         实测:配网成功后模块还会一直报 2,直到有人在 3 分钟窗口外把它关掉。
+ *         所以判成功必须另查 AT+WJAP?(见 wifi_ble_provision 里的主判据),
+ *         别拿这里的返回值当成功标志。
+ */
+static int wifi_wifi_config_status(void)
+{
+    char        cap[64];
+    const char *p;
+    int         v = 0;
+
+    if (!wifi_at_ex("AT+WCONFIG?", "+WCONFIG:", cap, sizeof(cap), WIFI_T_AT_MS))
+    {
+        return -1;
+    }
+
+    p = strchr(cap, ':');
+    if (p == NULL)
+    {
+        return -1;
+    }
+
+    p++;
+    while (*p == ' ')
+    {
+        p++;    // 手册排版里冒号后面有空格,实机输出不一定有,两种都得认
+    }
+
+    if ((*p < '0') || (*p > '9'))
+    {
+        return -1;
+    }
+
+    // 自己转数字。不用 atoi:配网状态里 10(WPS)是两位数,而 atoi 遇到
+    // 非数字的行为是实现定义的 —— 这里宁可多写四行,换来行为完全可控。
+    while ((*p >= '0') && (*p <= '9'))
+    {
+        v = (v * 10) + (*p - '0');
+        p++;
+    }
+
+    return v;
+}
+
+
+/**
+ * @brief  开一次蓝牙配网,阻塞到配网窗口结束
+ * @return 1 = 配网后模块确实连上 WiFi 了;0 = 没成(超时 / 模块不支持 / 用户没来)
+ * @note   只在"开机 WIFI_PROV_DEADLINE_MS 内没连上 WiFi"时调用,**且只调一次**。
+ * @note   手机端要装 **ESP BluFi** App(Espressif 官方的),连上模块开的热点,
+ *         把 WiFi 名和密码发过去。模块收到后自己连,连上会发
+ *         +EVENT:WIFI_CONNECT / +EVENT:WIFI_GOT_IP。
+ * @note   ⚠ 屏幕这条线:LCD 现在归 lock_task 管(见 lock.h 里 lock_cmd_t 的说明)。
+ *         这里**直接调 lock_lcd_set_title() 是踩线的**,之所以还算安全,是因为
+ *         配网只发生在开机阶段,那时锁一定空闲(s_unlocking == 0),和 lock_task /
+ *         finger_task 撞不上 —— 它们要么在等队列,要么在等 100ms 轮询。
+ *         **但要是以后加了"按键手动触发配网",这个前提立刻就没了** ——
+ *         那时必须改成往 lock_task 投一条"显示这段文字"的命令,由它统一出图,
+ *         否则两个任务同时写软件 SPI 的 LCD,画出来的就是花屏。
+ */
+static uint8_t wifi_ble_provision(void)
+{
+    uint32_t start;
+    uint8_t  fails = 0;
+    uint8_t  got_link = 0;      // 轮询期间就确认"已经连上 WiFi"了
+    int      st;
+
+    printf("\r\n==== 开机 %u 秒仍未连上 WiFi,转入蓝牙配网 ====\r\n",
+           (unsigned)(WIFI_PROV_DEADLINE_MS / 1000));
+
+    // 屏幕这时停在锁的 "PASSWORD" 界面。不给提示的话,用户只会觉得"锁坏了",
+    // 不会想到要掏手机。所以必须占一下屏。
+    lock_lcd_set_title((uint8_t *)"BLE PROV", MAGENTA);
+
+    // ── 先确认固件认不认这条命令 ──
+    //    AT+WCONFIG 是 Combo 模块的通用命令,但固件版本老了可能没有。
+    //    早一步查出来,比让用户对着屏幕干等 3 分钟强得多。
+    //
+    //    ⚠ 这一查还有第二个用处,是实测踩出来的:模块的电源**不和 MCU 一起断**。
+    //      用户配网配到一半板子复位/掉电,MCU 从零重跑,模块那边的配网任务还开着,
+    //      于是这里问出来是 2 而不是 0(手册 4.1.16:0=关 / 1=WiFi 配网 / 2=蓝牙配网)。
+    //      要是不看这个值、照样发 AT+WCONFIG=2,模块会回 "+WCONFIG:63 +ERROR"
+    //      (63 = 通用错误码,不带任何细节),配网就被误判成"启动失败"直接放弃 ——
+    //      而 s_prov_tried 这时已经置位,手机再也没机会配网了。
+    st = wifi_wifi_config_status();
+    if (st < 0)
+    {
+        printf("!! 模块不支持 AT+WCONFIG(固件太老?),跳过蓝牙配网\r\n");
+        lock_lcd_set_title((uint8_t *)"PASSWORD", BLUE);
+        return 0;
+    }
+    printf("当前配网状态: %d\r\n", st);
+
+    // ── 开一次蓝牙配网 ──
+    if (st == 2)
+    {
+        // 模块已经在配网了(上一次没配完就复位)。这条命令是"开一次",
+        // 重复开就是错,直接接着用现成的,别去踢它。
+        printf("模块已在蓝牙配网状态,直接等待(不重复启动)\r\n");
+    }
+    else
+    {
+        //    第二个参数是广播名。手册说**只有 esp BluFi 协议支持自定义这个名字** ——
+        //    起个一眼能认出来的,免得用户在手机上一堆设备里翻。
+        if (!wifi_at_cmd("AT+WCONFIG=2," WIFI_PROV_NAME, WIFI_T_CONFIG_MS))
+        {
+            // 命令报错别急着放弃:63 是"通用错误",信息量约等于没有,
+            // 而**模块的真实状态才是判据**。再问一次,进了 2 就照常往下等。
+            if (wifi_wifi_config_status() != 2)
+            {
+                printf("!! 蓝牙配网启动失败\r\n");
+                lock_lcd_set_title((uint8_t *)"PASSWORD", BLUE);
+                return 0;
+            }
+            printf("启动命令报错,但模块已进入配网状态,继续等待\r\n");
+        }
+    }
+
+    printf("蓝牙配网已开启:手机装 ESP BluFi App,搜 \"%s\",填 WiFi 名和密码\r\n",
+           WIFI_PROV_NAME);
+    printf("最多等 %u 秒\r\n", (unsigned)(WIFI_T_PROV_MS / 1000));
+
+    // ── 等窗口结束 ──
+    //    模块**不会**为"配网成功"单独发一个事件 —— 它直接自己连上去。
+    //    所以判据只有两条:模块把状态关回 0 了,或者我们自己的上限到了。
+    start = GetTim10Tick();
+    for (;;)
+    {
+        if ((GetTim10Tick() - start) >= WIFI_T_PROV_MS)
+        {
+            printf("!! 蓝牙配网超时:%u 秒没人来配,收工\r\n",
+                   (unsigned)(WIFI_T_PROV_MS / 1000));
+            break;
+        }
+
+        // ── 主判据:WiFi 真的连上了 ──
+        //    原来这里是等"模块自己把配网任务关掉(st 变 0)",这个假设**是错的**,
+        //    实机日志推翻了它:+EVENT:WIFI_CONNECT / +EVENT:WIFI_GOT_IP 都已经到了,
+        //    AT+WCONFIG? 却一直报 2 —— 模块根本没打算自己关。
+        //    后果很难查:设备明明配好了,却在这儿干等满 3 分钟,这段时间 wifi_task
+        //    整个堵着,MQTT 一直连不上。用户看到的是"手机说配网成功了,设备没反应"。
+        //    所以判据必须落在"联网结果"上,而不是"模块的任务状态"上。
+        //    这里和下面的 AT+WCONFIG? 是同一个任务里**顺序**发、顺序读,
+        //    不会出现 wifi_wifi_config_status() 上面注释担心的"两种读法抢环形缓冲"。
+        if (wifi_is_wifi_up())
+        {
+            printf("---- WiFi 已连上,蓝牙配网成功 ----\r\n");
+            got_link = 1;
+            break;
+        }
+
+        // ── 辅助判据:模块主动把配网窗口关了(它超时了,或它自己认为配完了) ──
+        st = wifi_wifi_config_status();
+
+        if (st < 0)
+        {
+            // 单次查询失败不能就判死刑 —— 模块可能正忙着一轮蓝牙交互,
+            // 应答晚了几百毫秒。连续几次都问不到才当作掉线。
+            fails++;
+            printf("!! 配网状态查询失败(第 %d 次)\r\n", fails);
+            if (fails >= 5)
+            {
+                printf("!! 连续 5 次查不到状态,当作配网结束\r\n");
+                break;
+            }
+        }
+        else
+        {
+            fails = 0;
+
+            if (st == 0)
+            {
+                // 窗口关了不代表失败 —— 手册说"配网成功/配网超时都会回到关闭"。
+                // 到底成没成,交给下面统一的"等几秒再查 AT+WJAP?"去判。
+                printf("---- 配网窗口已关闭 ----\r\n");
+                break;
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(WIFI_T_PROV_POLL_MS));
+    }
+
+    // ── 收工:显式把配网任务关掉 ──
+    //    不能指望模块自己关(理由见上面主判据)。留着它开着的后果不是"多费点电":
+    //    设备会**长期处于可被配网状态**,旁边随便谁装个 esp BluFi App,
+    //    就能把设备改到别的 WiFi 上去,连密码都不用知道 —— 这是个一直开着的口子。
+    //    放在这个位置(而不是只写在成功分支里)是为了让状态确定:不管这次是配成了、
+    //    超时了、还是模块干脆不理我们了,离开这个函数时配网任务都必须是"关"。
+    wifi_at_cmd("AT+WCONFIG=0", WIFI_T_CONFIG_MS);
+
+    // ── 窗口关了,给模块几秒把连接建起来再判成败 ──
+    //    为什么要等:配网成功的瞬间模块才刚开始连,立刻查 AT+WJAP? 多半是
+    //    "正在连"(status 1)。要是这时判成失败,上层就会拿着 EEPROM 里那对
+    //    旧凭据去连 —— 用户刚配的新网等于白配。
+    //    已经确认连上了(got_link)就跳过 —— 那是刚从 AT+WJAP? 读到的 3,
+    //    再等 8 秒纯属让用户多等。
+    if (!got_link)
+    {
+        printf("---- 等 %u 秒,看模块能不能自己连上 ----\r\n",
+               (unsigned)(WIFI_PROV_SETTLE_MS / 1000));
+        vTaskDelay(pdMS_TO_TICKS(WIFI_PROV_SETTLE_MS));
+    }
+
+    // 配网期间屏幕被占着,不管成没成都还回去。
+    // 联网失败绝不能连累开门 —— 屏幕回到能输密码的状态,锁至少还能用。
+    lock_lcd_set_title((uint8_t *)"PASSWORD", BLUE);
+
+    if (got_link || wifi_is_wifi_up())
+    {
+        printf("---- 蓝牙配网成功,模块已连上 WiFi ----\r\n");
+
+        // **这一处最要紧**:用户刚用手机把 WiFi 名和密码发给了**模块**,
+        // 固件手里一个字都没有。不从模块那儿抄一份存进 EEPROM,下次上电
+        // 固件就没有凭据可用,只能又掉回配网 —— 用户的辛苦等于白费。
+        wifi_ap_creds_save();
+        return 1;
+    }
+
+    printf("---- 蓝牙配网没成 ----\r\n");
+    return 0;
+}
+
+
+/**
  * @brief  WiFi + MQTT 任务
  * @note   优先级 1,比所有业务任务都低。联网再慢也不影响开锁。
  * @note   结构:{ [探活] → [连 WiFi] → [连 MQTT] → [常驻收发] } 循环重试,**永不退出**。
  *         任何一步失败都等一会儿整体重来:模块起得慢、线没插好、热点没开、
  *         路由器重启、云端踢人,都是常态。任务一死就再没人重连,
  *         设备在用户眼里就是"坏了"。
+ * @note   **凭据从哪来**:开机第一件事就是把 WiFi 名/密码从 EEPROM 里读出来
+ *         (见 wifi_cfg.c),以后每次重连都用这一份。
+ *         连不上 → 开一次蓝牙配网(见 wifi_ble_provision),配成功后
+ *         固件把新凭据抄回来存进 EEPROM,下次上电就用新的。
+ *         所以"换 WiFi"这个动作只需要做一次,不用重新烧录固件。
+ * @note   配网只自动做一次 —— 每次都进的话,设备会没完没了地变成可被配网状态,
+ *         既费电又开着个安全口子。
  */
 static void wifi_task(void *arg)
 {
+    // ── 配网窗口的计时起点 ──
+    //    用 GetTim10Tick() 而不是 xTaskGetTickCount(),两个原因:
+    //      1) TIM10 那个 1ms 时基是**裸机阶段就起来的**(main 一开头就配),
+    //         所以这个起点更接近"开机"本身,而不是"调度器起来"。
+    //         main 里那几秒外设初始化(LCD、EEPROM、指纹模块)也算得进去,
+    //         这正是用户说"开机 15 秒"时脑子里想的东西。
+    //      2) 连 WiFi 那一步的预算也是用 GetTim10Tick() 算的,同一个时基,
+    //         少一层换算就少一个出错的地方。
+    uint32_t boot = GetTim10Tick();
+    char     ssid[WIFI_CFG_SSID_MAX + 1];
+    char     pwd[WIFI_CFG_PWD_MAX + 1];
+    uint8_t  have_cred;
+    uint8_t  up;
+
     (void)arg;
+
+    // ── 开机第一件事:把 WiFi 名和密码从 EEPROM 读出来 ──
+    //    I2C 总线在 main 里已经配好了(wb2_Config 之后那行),这里可以直接读。
+    //    读一次只要几毫秒(读没有写周期,tWR 只在写的时候要等)。
+    //    这个任务是**调度器起来之后唯一碰 EEPROM 的** —— 锁只在裸机阶段
+    //    lock_init() 里读写一次,所以不用考虑两条 I2C 事务打架。
+    have_cred = wifi_cfg_load(ssid, pwd);
+    if (have_cred)
+    {
+        printf("已从 EEPROM 读到 WiFi:[%s]\r\n", ssid);
+    }
+    else
+    {
+        printf("EEPROM 里还没有 WiFi 凭据,待会儿要先配网\r\n");
+    }
 
     // ── 等模块上电就绪 ──
     vTaskDelay(pdMS_TO_TICKS(WIFI_BOOT_MS));
 
     printf("\r\n==== WB2 联网开始 ====\r\n");
+    printf("(开机 %u 秒内连不上 WiFi,就转蓝牙配网)\r\n",
+           (unsigned)(WIFI_PROV_DEADLINE_MS / 1000));
 
     // ── 重试环:连"模块没应答"也在里面重试,永不退出 ──
     //    为什么连探活失败都要重试?
@@ -852,10 +1206,49 @@ static void wifi_task(void *arg)
         // 切 STA 模式(1=STA),并存进 flash,下次上电不用重设
         wifi_at_cmd("AT+WMODE=1,1", WIFI_T_CONFIG_MS);
 
-        // && 会短路:WiFi 没通就不去连 MQTT 了(反正必然失败,还白等 15s)
-        if (wifi_wifi_join() && wifi_mqtt_connect())
+        // ── 1. 用 EEPROM 里的凭据连 WiFi ──
+        //    wifi_wifi_join() 内部自带"已经连着就不发命令"的判断,
+        //    所以这里不用先查一次 —— 一次循环只发一条 AT+WJAP? 探针。
+        if (have_cred)
+        {
+            up = wifi_wifi_join(ssid, pwd, s_prov_tried ? WIFI_T_WJAP_MS
+                                                        : wifi_join_budget(boot));
+        }
+        else
+        {
+            // 没凭据可发,只能寄希望于"模块自己连上了"(它的 flash 里可能存着)
+            up = wifi_is_wifi_up();
+        }
+
+        // ── 2. WiFi 通了就连 MQTT,连上就常驻收发 ──
+        //    && 会短路:WiFi 没通就不去连 MQTT 了(反正必然失败,还白等 15s)
+        if (up && wifi_mqtt_connect())
         {
             wifi_session();     // 常驻收发,只有 MQTT 掉线才返回
+
+            // 从上面出来只说明 MQTT 掉了,WiFi 未必也掉了 —— 重新问一次,
+            // 免得下面把"MQTT 掉线"误判成"WiFi 连不上"而去开蓝牙配网。
+            up = wifi_is_wifi_up();
+        }
+
+        // ── 3. 还是没连上 → 开一次蓝牙配网 ──
+        //    拦重复触发用的是 s_prov_tried(试过就算),不是"配成才置位"的标志:
+        //    不这样,用户没掏手机就会无限循环进配网,每次卡满 3 分钟。
+        //    注意**没有**"必须等满 15 秒"这个条件 —— 没有凭据时
+        //    (第一次上电)会立刻走到这里,这是对的:没什么可试的,直接让用户配。
+        if (!s_prov_tried && !up)
+        {
+            s_prov_tried = 1;   // 进门就置位:哪怕配网中途异常返回,也只做这一次
+
+            if (wifi_ble_provision())
+            {
+                // 配网成功,凭据已经由 wifi_ap_creds_save() 写进 EEPROM 了,
+                // 这里重新读一份到局部变量,下面几轮循环就用新的连。
+                have_cred = wifi_cfg_load(ssid, pwd);
+            }
+
+            // 别等那 10 秒了,马上按新状态试一次
+            continue;
         }
 
         printf("!! 联网未就绪,%dms 后重试\r\n", WIFI_RETRY_MS);
