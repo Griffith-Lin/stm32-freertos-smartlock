@@ -20,6 +20,7 @@
 #include "lock.h"
 #include "finger.h"
 #include "NV400.h"
+#include "wifi.h"
 
 #endif
 

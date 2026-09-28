@@ -48,6 +48,8 @@ virtualFolder:
         - path: api/finger.c
         - path: api/wifi.c
         - path: api/wifi.h
+        - path: api/wifi_cfg.c
+        - path: api/wifi_cfg.h
       folders: []
     - name: startup
       files:

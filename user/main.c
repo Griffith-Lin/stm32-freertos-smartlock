@@ -78,6 +78,7 @@ int main()
     spi1_w25_Config();
     LCD_Init();
     mg200_Config(115200);
+    wb2_Config();                     // WB2 联网模块:USART2(PA2/PA3),只配硬件不发命令
     i2c_bus_config(&i2c_bus_cy9cm);   // CY8CMBR3116 按键:SCL=PB6 SDA=PB7
     i2c_bus_config(&i2c_bus_at24c04); // AT24C04A EEPROM:SCL=PA8 SDA=PC9
     CY9CM_Init();                     // RES 复位脉冲 + (必要时)写 128 字节配置
@@ -107,6 +108,7 @@ int main()
     cy9cm_tasks_init(); // 触摸板:建按键事件队列 + 创建扫描任务
     lock_tasks_init();  // 密码锁:消费触摸板按键,校验密码后驱动电机开锁
     finger_tasks_init(); // 指纹锁:轮询 MG200 的 DETECT 脚,比对通过后走同一个开锁流程
+    wifi_tasks_init();   // 联网:WB2 模块跑 AT 命令连 WiFi→MQTT,优先级最低(1)
 
     // ===== 学习演示任务(与业务无关) =====
     // learn_tasks_init();
