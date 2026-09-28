@@ -1,0 +1,39 @@
+﻿#ifndef __WIFI_
+#define __WIFI_
+
+#include "stm32f4xx.h"
+
+// ── Ai-Thinker WB2(Combo AT 固件):STM32 与分包平台之间的 MQTT 通道 ──
+//
+// 接线(注意 TX/RX 要交叉,而且必须共地):
+//
+//     STM32 PA2 (USART2_TX, AF7)  ──→  WB2 的 RX
+//     STM32 PA3 (USART2_RX, AF7)  ←──  WB2 的 TX
+//     GND                          ───  GND
+//
+// 模块出厂波特率 115200,AT 命令一律以 "\r\n" 结尾。
+//
+// 分工:WB2 自己跑 TCP/TLS/ MQTT 协议栈,STM32 只用 AT 命令遥控它。
+//       所以这里没有 LwIP、没有 socket,只有一串字符串收发。
+
+#define WIFI_UART_BAUD      115200      // WB2 默认波特率
+
+/**
+ * @brief  初始化 USART2(PA2/PA3)—— 只配硬件,不发命令
+ * @return 无
+ * @note   **必须在 vTaskStartScheduler() 之前调用**。
+ *         真正的联网动作在 wifi_task 里做,因为连 WiFi 要等好几秒,
+ *         裸机阶段忙等会把启动流程卡住。
+ */
+void wb2_Config(void);
+
+/**
+ * @brief  创建 WiFi/MQTT 任务
+ * @return 无
+ * @note   在 vTaskStartScheduler() 之前调用。
+ *         任务优先级 1,比所有业务任务(2/3)都低 —— 联网慢一点没关系,
+ *         但绝不能让它抢了开锁、按键、指纹的 CPU。
+ */
+void wifi_tasks_init(void);
+
+#endif // !__WIFI_
