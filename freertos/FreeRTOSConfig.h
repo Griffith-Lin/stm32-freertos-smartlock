@@ -23,7 +23,12 @@
 #define configUSE_PREEMPTION            1   /* 启用抢占式调度：高优先级就绪任务可抢占低优先级任务 */
 #define configMAX_PRIORITIES            (5)      /* 支持的任务优先级数量；实际优先级为 0~4 */
 #define configMINIMAL_STACK_SIZE        (128)    /* 空闲任务最小栈深度，单位为字；32 位 MCU 中 128 字=512 字节 */
-#define configTOTAL_HEAP_SIZE           (8 * 1024)  /* FreeRTOS 动态内存堆大小，单位为字节 */
+// 从 8KB 提到 12KB:加 wifi 任务(栈 384 字 = 1536 字节 + TCB)之前实测只剩 1240 字节,
+// 8KB 已经装不下了。F401 一共 96KB RAM,当时只用掉 17.7KB,提这 4KB 毫无压力 ——
+// 堆大小纯粹是配置选择,不是硬件限制。以后再往里加任务,先读 xFreeBytesRemaining 看余量——
+// ⚠ 别记地址:它每次编译都可能变(加一个全局变量就漂)。用这条命令现查:
+//     arm-none-eabi-nm.exe "build/Target 1/project.axf" | grep xFreeBytesRemaining
+#define configTOTAL_HEAP_SIZE           (12 * 1024) /* FreeRTOS 动态内存堆大小，单位为字节 */
 #define configMAX_TASK_NAME_LEN         (12)     /* 任务名称缓冲区最大长度，通常包含结尾的 '\0' */
 #define configIDLE_SHOULD_YIELD         1        /* 同优先级任务就绪时，允许空闲任务主动让出 CPU */
 #define configUSE_MUTEXES               1        /* 启用互斥量及其优先级继承机制 */
