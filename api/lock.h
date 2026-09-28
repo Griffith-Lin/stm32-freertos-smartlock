@@ -2,6 +2,9 @@
 #define __LOCK_
 
 #include "stm32f4xx.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
 
 // 密码锁业务逻辑
 //   输入设备:电容触摸板(CY9CMBR3116),按键经 cy9cm_key_queue 送到这里
@@ -16,6 +19,36 @@
 #define LOCK_PWD_LEN    6       // 密码位数
 #define LOCK_OPEN_MS    3000    // 开锁后保持多久自动回锁(ms)
 #define LOCK_MOTOR_MS   500     // 开锁/回锁的电机行程时间(ms),按实际锁体调
+
+// ── 锁控命令(远程来源:MQTT 云端下发)──
+//
+// 为什么不让 wifi_task 直接调 lock_open()? 两个理由:
+//   1) **优先级**。wifi 任务优先级 1(最低),lock 是 2。让低优先级任务去驱动
+//      电机、再保持 3 秒,这 4 秒里 MQTT 的上报和下发全被堵住,USART2 的
+//      环形缓冲还可能溢出丢字节。
+//   2) **单一决策者**。谁在开锁、LCD 该显示什么,只能有一个人说了算。
+//      指纹、密码、云端三条路都去抢 LCD 和电机,迟早串。
+//      所以统一成:任何人都只能"投递一个意图",由 lock_task 决定做不做。
+//
+// 平台约定(分包平台 attributes/push 话题):
+//     {"DoorLock":1}  → 开锁
+//     {"DoorLock":0}  → 关锁
+typedef enum
+{
+    LOCK_CMD_OPEN = 0,      // 对应 {"DoorLock":1},见 lock_post_cmd() 的说明
+    LOCK_CMD_CLOSE          // 对应 {"DoorLock":0}
+} lock_cmd_t;
+
+/**
+ * @brief  投递一条锁控命令(非阻塞)
+ * @param  cmd 命令
+ * @return 1 = 已入队;0 = 队列没建好 或 已满,被丢弃(已打印日志)
+ * @note   **只能在任务里调**,不能在中断里调(内部用的是 xQueueSend,
+ *         不是 FromISR 版本)。当前唯一的调用方是 wifi_task。
+ *         故意不阻塞:命令的时效性很强,排不上队就该丢,而不是让调用者
+ *         (比如 wifi 任务)卡在这里等 —— 它卡住会连累 MQTT 的心跳和接收。
+ */
+uint8_t lock_post_cmd(lock_cmd_t cmd);
 
 /**
  * @brief  密码锁初始化:从 EEPROM 加载密码(没有就写默认值)+ 画开机界面
@@ -36,15 +69,23 @@ void lock_init(void);
 void lock_tasks_init(void);
 
 /**
- * @brief  开锁 —— 所有开锁来源的公共出口(密码、指纹……都走这里)
+ * @brief  开锁 —— 本地开锁来源的公共出口(密码、指纹都走这里)
  * @param  title 开锁期间标题行显示的 ASCII 文字
  * @param  color 标题颜色
- * @return 1 = 本次真的开了锁;0 = 已有开锁流程在进行,本次请求被忽略
- * @note   **互斥**:同一时刻只允许一个开锁流程,免得两个任务同时去推电机。
- *         "检查 + 占用标志"这两步放在临界区里做 —— 中间只要被 SysTick 切走
- *         一次,两个任务就可能都读到"没人开锁",然后一起去驱动 L9110S。
- * @note   整个流程阻塞 LOCK_MOTOR_MS×2 + LOCK_OPEN_MS 毫秒,内部用
- *         vTaskDelay 让出 CPU。**只能在任务里调用,不能在中断里调。**
+ * @return 1 = 已受理,锁会由 lock_task 驱动着打开;0 = 已有开锁流程在进行,本次被忽略
+ * @note   **已经改成非阻塞了**(原来在这里一觉睡 4 秒)。现在只做三件事:
+ *         抢占"正在开锁"标志、写 LCD 标题、把状态机推到"推锁舌"。
+ *         之后的电机行程、3 秒保持、自动回锁,全部由 lock_task 每 20ms 的
+ *         tick 推进(见 lock.c 的 lock_tick())。
+ *
+ *         为什么非拆不可:远程"关锁"要求**立刻回锁**,而如果这里阻塞 4 秒,
+ *         关锁命令就只能在队列里干等 —— 那也是"关锁"这个动作名存实亡的原因。
+ *         拆开之后保持期随时可被打断。
+ * @note   **互斥仍然保留**:同一时刻只允许一个开锁流程,免得两个任务同时去推
+ *         电机。"检查 + 占用标志"这两步放在临界区里做 —— 中间只要被 SysTick
+ *         切走一次,两个任务就可能都读到"没人开锁",然后一起去驱动 L9110S。
+ * @note   **不能在中断里调**:里面要写 LCD、还要进出临界区,都不是中断安全的。
+ *         中断里想开锁就发个队列/信号量出来。
  */
 uint8_t lock_open(uint8_t *title, uint16_t color);
 
