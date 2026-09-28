@@ -360,61 +360,6 @@ static uint8_t wifi_wait_event(const char *token, uint32_t timeout_ms)
 
 
 /**
- * @brief  把模块报的错误码翻译成人话
- * @param  line 形如 "AT+WJAP:66" 的报错行
- * @note   手册 1.4.2 节规定了报错格式:"\r\n+<CMD>:<错误码>\r\nERROR\r\n";
- *         码表在 1.6 节。这里只挑联网最常撞上的几个 ——
- *         重点是把 66 和 69 分开,它们的含义差别最大,排查方向也完全相反。
- */
-static void wifi_show_errno(const char *line)
-{
-    const char *p    = strrchr(line, ':');
-    int         code = 0;
-
-    if (p == NULL)
-    {
-        return;
-    }
-
-    p++;
-    while ((*p >= '0') && (*p <= '9'))
-    {
-        code = (code * 10) + (*p - '0');
-        p++;
-    }
-
-    switch (code)
-    {
-        case 65:
-            printf("   错误码 65:Wi-Fi 模式错误 —— 单 AP 模式下连不了,要先 AT+WMODE=1,1\r\n");
-            break;
-
-        case 66:
-            printf("   错误码 66:Wi-Fi 连接失败 —— **扫到了**这个热点,但连不上。\r\n");
-            printf("   八成是密码错,或者热点跑在 5G/6G 频段而模块只认 2.4G。\r\n");
-            break;
-
-        case 67:
-            printf("   错误码 67:连上了但 DHCP 没拿到 IP —— 热点侧没发地址,重开一次热点\r\n");
-            break;
-
-        case 69:
-            printf("   错误码 69:没扫到这个 SSID —— 名字写错了(留意空格和大小写),\r\n");
-            printf("   或者热点压根没开,或者在模块不支持的频段上。\r\n");
-            break;
-
-        case 76:
-            printf("   错误码 76:当前网络配置模式不对 —— 先 AT+WMODE=1,1 切到 STA\r\n");
-            break;
-
-        default:
-            printf("   错误码 %d:手册 1.6 节有完整码表\r\n", code);
-            break;
-    }
-}
-
-
-/**
  * @brief  问模块"WiFi 现在是通的吗"
  * @return 1 = 已连上且拿到 IP;0 = 没通(或查询本身失败)
  * @note   用 AT+WJAP? 查,回的是:
