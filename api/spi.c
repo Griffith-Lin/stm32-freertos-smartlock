@@ -217,6 +217,94 @@ void send_data(uint8_t data)
 
 
 
+/*----------- spi3:接 RC522 刷卡模块(hardware) ------------*/
+// PC10 spi3_sck   PC11 spi3_miso   PC12 spi3_mosi   (都是 AF6)
+//
+// 为什么 RC522 走硬件 SPI3,而 W25Q 还留着软件模拟那一份:
+//   RC522 的寄存器访问是"每次就 2 个字节、还要频繁开关片选"的短事务,
+//   软件模拟光 GPIO 翻转的固定开销就比数据本身还大。而 RC522 用的时钟
+//   模式(CPOL=0/CPHA=1Edge)和 W25Q 完全一样,硬件外设拿来就能用。
+//
+// 分频为什么是 8:
+//   SPI3 挂在 APB1 上(系统 84MHz,AHPB1 二分频 = 42MHz),8 分频 = 5.25MHz。
+//   RC522 手册给的 SPI 时钟上限是 10MHz,取 5.25MHz 留了一倍余量 ——
+//   刷卡对速度没有任何要求,时序稳比跑得快重要。
+//
+// ⚠ 片选(CS)和复位(RST)**不在这里配**:
+//   它俩是 RC522 这个器件自己的脚(PA15 / PD2),不是 SPI3 总线的一部分,
+//   所以引脚宏放在 rfid.h 里 —— 和 SPI1 那边 "总线归 spi.h、器件归 spi.h
+//   的 SPI_CS" 是同一个套路,只是这次器件头文件不是 spi.h 而已。
+//
+// 🟡 L1 架构代码 —— 复用脚/分频/时钟极性都是"硬件设计选择",任一项配错的表现
+// 都是"卡完全刷不到"而不是烧东西,但对面的 RC522 不会给你任何报错
+void spi3_Config(void)
+{
+    GPIO_InitTypeDef gpio_InitTypeDef = {0};
+    SPI_InitTypeDef  spi_InitTypeDef  = {0};
+
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_SPI3, ENABLE);
+    RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
+
+    // PC10/PC11/PC12 → 复用推挽输出,无上下拉
+    gpio_InitTypeDef.GPIO_Pin   = GPIO_Pin_10 | GPIO_Pin_11 | GPIO_Pin_12;
+    gpio_InitTypeDef.GPIO_Mode  = GPIO_Mode_AF;
+    gpio_InitTypeDef.GPIO_OType = GPIO_OType_PP;
+    gpio_InitTypeDef.GPIO_Speed = GPIO_High_Speed;
+    gpio_InitTypeDef.GPIO_PuPd  = GPIO_PuPd_NOPULL;
+    GPIO_Init(GPIOC, &gpio_InitTypeDef);
+
+    GPIO_PinAFConfig(GPIOC, GPIO_PinSource10, GPIO_AF_SPI3);
+    GPIO_PinAFConfig(GPIOC, GPIO_PinSource11, GPIO_AF_SPI3);
+    GPIO_PinAFConfig(GPIOC, GPIO_PinSource12, GPIO_AF_SPI3);
+
+    spi_InitTypeDef.SPI_Direction         = SPI_Direction_2Lines_FullDuplex;
+    spi_InitTypeDef.SPI_Mode              = SPI_Mode_Master;
+    spi_InitTypeDef.SPI_DataSize          = SPI_DataSize_8b;
+    spi_InitTypeDef.SPI_CPOL              = SPI_CPOL_Low;    // RC522 = SPI 模式 0
+    spi_InitTypeDef.SPI_CPHA              = SPI_CPHA_1Edge;  // 第一个边沿采样
+    spi_InitTypeDef.SPI_NSS               = SPI_NSS_Soft;    // 片选自己用 GPIO 拉
+    spi_InitTypeDef.SPI_BaudRatePrescaler = SPI_BaudRatePrescaler_8;  // 42MHz/8 = 5.25MHz
+    spi_InitTypeDef.SPI_FirstBit          = SPI_FirstBit_MSB;         // RC522 高位先发
+
+    SPI_Init(SPI3, &spi_InitTypeDef);
+
+    // ⚠ 这一行不能省,省了 SPI3 会**整个不工作**,而且一点报错都没有。
+    //   原因:ST 的 F4 版 SPI_Init() 只是把 SPI_NSS_Soft(=0x0200,也就是 SSM 位)
+    //   或进 CR1,它**从不碰 SSI 位**(那个函数里"Set SSM, SSI and MSTR bits"
+    //   的注释是从 F1 版抄过来的,而 F1 的代码里确实有 if 分支去设 SSI,
+    //   F4 这版被简化成了单纯或运算,注释没跟着改)。
+    //   SSM=1 表示"内部 NSS 由 SSI 位决定",可 SSI=0 表示内部 NSS 被拉**低**
+    //   —— 主模式下这会让 SPI 判定为 MODF(模式错误),硬件自动把 MSTR 和 SPE
+    //   清零,外设直接停摆。现象是:片选在拉、数据线一动不动、RC522 永远寻不到卡。
+    //   所以必须显式把 SSI 置 1(内部 NSS 拉高 = "没有别的 SPI 主机在抢总线")。
+    SPI_NSSInternalSoftwareConfig(SPI3, SPI_NSSInternalSoft_Set);
+
+    SPI_Cmd(SPI3, ENABLE);
+}
+
+
+// 🔴 L0 生死线代码 —— 和 SPI_Echo 是同一类:直接轮询 SPI3 的 TXE/RXNE 状态位、
+// 收发共用同一个 DR。标志语义看错就会静默错位(超时到期后照样把数据写进去),
+// 而 RC522 的寄存器读回来的是地址+数据两个字节,错位一个字节就是整包寄存器
+// 全错,表现为"找不到卡"却完全没有报错。
+uint8_t SPI3_Echo(uint8_t data)
+{
+    uint32_t timeout = 0xFFFF;  // 防死等:MISO 短路/RC522 没焊好时不能卡在这儿
+
+    while ((SPI_GetFlagStatus(SPI3, SPI_FLAG_TXE) == RESET) && --timeout)
+        ;
+    SPI_SendData(SPI3, data);
+
+    timeout = 0xFFFF;
+    while ((SPI_GetFlagStatus(SPI3, SPI_FLAG_RXNE) == RESET) && --timeout)
+        ;
+
+    return SPI_ReceiveData(SPI3);
+}
+
+
+
+
 
 
 

@@ -40,6 +40,7 @@ STM32F401xx(Cortex-M4 @84MHz)固件:ST 标准外设库(StdPeriph,**不是** HAL)
 | PA0 | WKUP,STANDBY 唤醒专用(上升沿) |
 | PA4 / PA5/6/7 | SPI1 CS / SCK/MISO/MOSI(W25Q Flash) |
 | PA9 / PA10 | USART1 TX/RX,printf 控制台 |
+| PA15 | RC522 片选 SDA。**兼 JTDI**:STM32F4 无 SWJ_CFG 寄存器,配成 GPIO 输出即抢占成功(PB3/PB4 同理);代价是 JTAG 不可用,SWD 不受影响 |
 | PB1、PB10、PB12~15 | LCD |
 | PB3 / PB4 | L9110S 电机 FOR/BAK |
 | PB8 / PB9 | LED 红/绿(低电平亮) |
@@ -47,11 +48,14 @@ STM32F401xx(Cortex-M4 @84MHz)固件:ST 标准外设库(StdPeriph,**不是** HAL)
 | PC0 | MG200 DETECT(有手指=高电平) |
 | PC1 | MG200 电源使能(拉高后模块约 1~2s 才应答) |
 | PC6 / PC7 | USART6 TX/RX(AF8),接 MG200 指纹模块 |
+| PC10 / PC11 / PC12 | SPI3 SCK/MISO/MOSI(AF6),接 RC522 刷卡模块 |
+| PD2 | RC522 复位 RST(低电平有效) |
 
 ## FreeRTOS 与时间
 
 - 两个 1ms 时基:FreeRTOS tick(`configTICK_RATE_HZ = 1000`)和 TIM10(`tim.h` 的 `GetTim10Tick()`/`TIM10_delay()`)。TIM10 不依赖调度器,裸机阶段(main 里的 MG200 轮询)也用它计时。`delay.c` 的 `Delay_Ms/Delay_Us` 是 NOP 忙等,只在裸机阶段用,别在任务里长时间调。
-- `configMAX_PRIORITIES = 5`(优先级 0~4);任务栈深度单位是**字**(4 字节);堆只有 8KB(heap_4),加任务前先算余量,否则会打到 `vApplicationMallocFailedHook` 死循环。
+- `configMAX_PRIORITIES = 5`(优先级 0~4);任务栈深度单位是**字**(4 字节);堆 12KB(`configTOTAL_HEAP_SIZE`,heap_4),**加任务前先算余量**,否则会打到 `vApplicationMallocFailedHook` 死循环。
+  已切出去的任务栈:`wifi` 512 + `lock` 320 + `finger`/`key_scan`/`cy9cm_scan`/`rc522` 各 256 + `key_action` 128,再加 idle 和 timer 各 128(字)= **2240 字 = 8960 字节**;连同 9 个 TCB(每个约 110 字节)和 3 个队列,合计约 10.2KB,**只剩约 1.9KB**。`rc522_tasks_init()` 里打了一行 `xPortGetFreeHeapSize()` 实测值,加东西前后对比那行数字即可。
 - 中断优先级分组必须是 `NVIC_PriorityGroup_4`(main 开头已做);`configMAX_SYSCALL_INTERRUPT_PRIORITY = 0xB0`,ISR 里只能用 `...FromISR` API。
 - `FreeRTOSConfig.h` 里未打开的 `INCLUDE_xxx` API 会在链接时报 `Undefined symbol`,要用先开配置。
 - 当前任务:`key_tasks_init()` 建 `key_scan`(10ms 轮询 GPIO 状态机消抖)通过 `key_queue` 把事件发给 `key_action`;长短按阈值 600ms。任务/队列/栈的清单见 [api/key.c](api/key.c)。
