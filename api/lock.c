@@ -1,4 +1,5 @@
 ﻿#include "lock.h"
+#include "admin.h"      // admin_begin / admin_is_active / admin_handle_key / admin_tick
 #include "CY9CM.h"      // cy9cm_key_queue:触摸板按键事件
 #include "AT24C04.h"    // 密码存储
 #include "L9110S.h"     // 开锁电机
@@ -7,6 +8,7 @@
 #include "task.h"
 #include "queue.h"
 #include "stdio.h"
+#include "string.h"     // memcpy:lock_set_password
 
 // ══════════════════════════════════════════════════════════════════════════
 //  密码在 AT24C04A 里的存储布局(512 字节的 EEPROM,这里只用了前 8 个)
@@ -35,12 +37,38 @@ static const uint8_t LOCK_DEFAULT_PWD[LOCK_PWD_LEN] = {
 };
 
 // ── LCD 版面(屏是 240 宽 × 320 高,左上角为原点)──
-#define LOCK_LCD_TITLE_ROW  80
+//
+// ⚠ 下面三个 ROW 是**一组对好的数**,要挪位置就整体挪 —— 只改 LOCK_UI_UP
+//   这一个值,别去单独改某一个。三条相对关系都是有意的:
+//     ① 大提示区从"标题行下沿 + 1"开始(基准 80 + 32 = 112)。一个像素都不碰
+//        标题行 —— 于是 lock_tick() 在回锁结束时刷标题、和提示区写字永远
+//        不会互盖,不需要引入"屏幕所有权协议"(见 lock.h 里那段说明);
+//     ② 密码输入行(基准 160~191)整个落在大提示区的第 2、3 行里 —— 所以进
+//        管理员模式时不用整屏清一次就能盖住它,省掉 100ms 以上;
+//     ③ 大提示区 6 行 × 24 = 144 行,基准底边 112+144 = 256,离屏底 320 还有 64 行。
+//   单独动其中一个,上面至少破一条,现象是"标题被提示区盖掉一半",或者
+//   "退出管理员模式后输入行留着半截旧字"。
+//
+//   基准值(80/160/112)是"界面贴着屏幕中上部"时的数;要整体上下移就改
+//   LOCK_UI_UP,往上移写正数、往下移写负数。当前上移 30:
+//     标题行 50~81,大提示区 82~225,输入行 130~161。
+#define LOCK_UI_UP          30      // 整块界面往上挪多少像素
+
+#define LOCK_LCD_TITLE_ROW  (80  - LOCK_UI_UP)
 #define LOCK_LCD_TITLE_COL  72      // 8 个字 × (24/2) = 96 像素,居中
-#define LOCK_LCD_INPUT_ROW  160
+#define LOCK_LCD_INPUT_ROW  (160 - LOCK_UI_UP)
 #define LOCK_LCD_INPUT_COL  72      // 6 个字符 × (32/2) = 96 像素,居中
 #define LOCK_LCD_TITLE_SIZE 32
 #define LOCK_LCD_INPUT_SIZE 32
+
+// ── 大提示区的版面(接口和它为什么存在都写在 lock.h 里)──
+//   行高 24、每行 20 个字符:字号 24 时一个 ASCII 字符正好 12 像素宽,
+//   20 × 12 = 240 = 屏宽,所以一行刚好铺满,不用算居中。
+#define LOCK_BIG_ROW      (112 - LOCK_UI_UP)
+#define LOCK_BIG_LINE_H   24
+#define LOCK_BIG_LINES    6
+#define LOCK_BIG_COLS     20
+#define LOCK_BIG_SIZE     24
 
 // 密码错误的提示语。**必须凑够 8 个字符**:标题行原本是 "PASSWORD"(8 字符),
 // 而 LCD_Font_Dis_Ascii() 只把每个字符格子里的像素写一遍,新文字短了盖不掉
@@ -54,6 +82,7 @@ static uint8_t s_pwd[LOCK_PWD_LEN];     // 正确的密码,开机时从 EEPROM �
 static uint8_t s_input[LOCK_PWD_LEN];   // 用户已经输入的内容
 static uint8_t s_input_len;             // 已输入几位
 static uint8_t s_unlocking;             // 1 = 正在开锁/回锁,这期间不响应按键
+static uint8_t s_lcd_hold;              // 大提示区的占用位(LOCK_SCREEN_xxx 的按位或)
 
 // ── 锁控命令队列(远程来源:MQTT 云端下发)──
 //    投递方是 wifi_task,消费方是 lock_task。见 lock.h 里 lock_cmd_t 的说明。
@@ -277,6 +306,177 @@ uint8_t lock_is_busy(void)
 }
 
 /**
+ * 🟢 L2 工具代码 —— 只读的状态快照,回答的是"电机这一刻通没通电",和 lock_is_busy() 的"整个开锁流程走没走完"是两回事
+ * @brief  电机是不是正通着电(开锁行程 / 回锁行程中)
+ * @return 1 = 电机正在转;0 = 电机已刹车(静止,或保持期内已断电)
+ * @note   为什么不能复用 lock_is_busy():那个覆盖"开 500ms + 保持 3 秒 + 回
+ *         200ms"整整 3.7 秒,而电机真正通电的只有开头 500ms 和结尾 200ms。
+ *         保持期内电机早就刹车了,谁在这时候画屏都无所谓。
+ * @note   给管理员模式用:它那些整屏重画一次要一秒上下,而 lock_task 同一
+ *         时刻只能干一件事 —— 撞上电机行程就会把 L9110S_control(MOTOR_BRAKE)
+ *         拖到一秒以后,锁舌顶到头还在转。所以它画之前先问一句,行程中就
+ *         欠着,等刹车了再补。
+ */
+uint8_t lock_motor_running(void)
+{
+    return ((s_state == LOCK_OPENING) || (s_state == LOCK_CLOSING)) ? 1 : 0;
+}
+
+// ── 大提示区(接口说明在 lock.h)──
+
+/**
+ * 🟢 L2 工具代码 —— 只画标题行和输入行这两处固定内容,不碰大提示区;幂等,重复调没有副作用
+ * @brief  把界面刷回"等着输密码"的静止画面
+ * @note   为什么单独抽出来:复位后的初始画面、回锁完成的收尾、管理员模式退出,
+ *         三处要画的是同一个东西。原来前两处各写了一遍,现在合并成这一个出口。
+ */
+void lock_lcd_show_idle(void)
+{
+    lock_lcd_set_title((uint8_t *)"PASSWORD", BLUE);
+    lock_clear_input();
+}
+
+/**
+ * 🟢 L2 工具代码 —— 契约两条:每行固定 20 个字符(不足自动补空格),这是"这一行能把旧内容整行盖干净"的前提;越界行号直接忽略
+ * @brief  在大提示区的第 line 行画一整行文字
+ * @param  line 行号 0 ~ LOCK_BIG_LINES-1,越界直接忽略
+ * @param  text ASCII 文字,超过 LOCK_BIG_COLS 个字符的部分被截掉
+ */
+void lock_lcd_big_line(uint8_t line, const char *text)
+{
+    uint8_t buf[LOCK_BIG_COLS + 1];
+    uint8_t i;
+
+    if (line >= LOCK_BIG_LINES)
+    {
+        return;
+    }
+
+    // 先整行铺空格,再把文字盖上去 —— 这一步不只是为了好看:
+    // 每个字符格子会被完整写一遍(笔画写前景色、其余写背景色),补齐 20 个字符
+    // 才等于把这一行 240 个像素全覆盖,上一屏的字不会在右边留下残影。
+    for (i = 0; i < LOCK_BIG_COLS; i++)
+    {
+        buf[i] = ' ';
+    }
+    for (i = 0; (i < LOCK_BIG_COLS) && (text[i] != '\0'); i++)
+    {
+        buf[i] = (uint8_t)text[i];
+    }
+    buf[LOCK_BIG_COLS] = '\0';
+
+    lock_lcd_text(LOCK_BIG_ROW + (uint16_t)line * LOCK_BIG_LINE_H, 0,
+                  LOCK_BIG_SIZE, BLACK, WHITE, buf);
+}
+
+/**
+ * 🟢 L2 工具代码 —— 一次开窗口批量刷白,比逐行写字快一倍;整块擦干净就完事,不含任何状态
+ * @brief  擦掉整个大提示区(刷成白底)
+ * @note   左上角是 (LOCK_BIG_ROW, 0),整块 6 行 × 24 像素高 × 240 像素宽。
+ */
+void lock_lcd_big_clear(void)
+{
+    LCD_Clear(LOCK_BIG_ROW, LOCK_BIG_ROW + LOCK_BIG_LINES * LOCK_BIG_LINE_H,
+              0, 240, WHITE);
+}
+
+/**
+ * 🟡 L1 架构代码 —— 占用检查与置位必须原子(分开写两个任务会同时以为"没人占"),而"失败就让调用方别画界面、活照干"这条约定决定了 111# 同时派两个活时不会打架
+ * @brief  占用大提示区
+ * @param  who 占用者标识,取 LOCK_SCREEN_xxx
+ * @return 1 = 占到了;0 = 已经有人占着,调用方**活照干但别画界面**
+ * @note   检查"有没有人占"和置位必须在同一个临界区里做完。分成两句写的话,
+ *         中间被 SysTick 切走一次,两个任务就会双双认为"没人占",然后一起画 ——
+ *         111# 初始化同时给指纹和刷卡派活,就是这个场景。
+ */
+uint8_t lock_screen_take(uint8_t who)
+{
+    uint8_t got = 0;
+
+    taskENTER_CRITICAL();
+    if (s_lcd_hold == 0)
+    {
+        s_lcd_hold = who;
+        got = 1;
+    }
+    taskEXIT_CRITICAL();
+
+    if (got)
+    {
+        // 擦一次底:上一家走的时候虽然也擦过,但中间 lock_tick() 有可能
+        // 已经往这块里写过密码输入行了(它只认占用位,不认时间先后)
+        lock_lcd_big_clear();
+    }
+
+    return got;
+}
+
+/**
+ * 🟡 L1 架构代码 —— 释放时的次序就是设计:先擦屏、再判断要不要刷回静止画面、最后才放占用位,反了会出现"占用位已放、界面还没收尾"的空窗
+ * @brief  用屏结束:擦干净大提示区、释放占用位,必要时把界面刷回静止画面
+ * @param  who 占用者标识,必须和 lock_screen_take() 传的一致
+ */
+void lock_screen_give(uint8_t who)
+{
+    lock_lcd_big_clear();
+
+    // 锁还在动作中的话**不要**去刷标题:那会让 "PASSWORD" 在保持期就显示出来。
+    // 这种情况交给 lock_tick() 在回锁完成时收尾 —— 那时候占用位已经放开了,
+    // 它那道 if 就能过。
+    if (!lock_is_busy() && (s_lcd_hold == who))
+    {
+        lock_lcd_show_idle();
+    }
+
+    taskENTER_CRITICAL();
+    s_lcd_hold &= (uint8_t)~who;
+    taskEXIT_CRITICAL();
+}
+
+/**
+ * 🟡 L1 架构代码 —— 改密码的落盘点:EEPROM 和 RAM 必须一起更新,只写一边就会出现"这次能用、重启后变回去"
+ * @brief  改密码:写进 EEPROM,并立刻更新 RAM 里的缓存
+ * @param  pwd 新密码(ASCII)
+ * @param  len 长度,必须等于 LOCK_PWD_LEN
+ * @return 1 = 成功;0 = 长度不对 或 EEPROM 写失败
+ */
+uint8_t lock_set_password(const uint8_t *pwd, uint8_t len)
+{
+    uint8_t buf[LOCK_EEPROM_BYTES];
+    uint8_t i;
+
+    if (len != LOCK_PWD_LEN)
+    {
+        printf("改密码:长度必须是 %d 位\r\n", LOCK_PWD_LEN);
+        return 0;
+    }
+
+    buf[0] = LOCK_FLAG_VALUE;
+    buf[1] = LOCK_PWD_LEN;
+    for (i = 0; i < LOCK_PWD_LEN; i++)
+    {
+        buf[2 + i] = pwd[i];
+    }
+
+    // ⚠ 这一句里有约 20ms 的 NOP 忙等(见 lock.h 的说明)。写失败就**不动**
+    //   RAM 里的 s_pwd[]:免得这次能用、掉电重启之后又变回旧密码,让人以为
+    //   "明明改过了却打不开"。
+    if (AT24C04_page_write(LOCK_EEPROM_ADDR, buf, LOCK_EEPROM_BYTES) != 0)
+    {
+        printf("改密码:写 EEPROM 失败,新密码不生效\r\n");
+        return 0;
+    }
+
+    for (i = 0; i < LOCK_PWD_LEN; i++)
+    {
+        s_pwd[i] = pwd[i];
+    }
+
+    printf("密码已更新,立即生效\r\n");
+    return 1;
+}
+
+/**
  * 🟡 L1 架构代码 —— 状态机入口的次序就是设计:先写 s_state 再刷 LCD/推电机,避免出现 s_unlocking=1 而 s_state=IDLE 的自相矛盾窗口,并清掉上一轮的 s_close_req
  * @brief  进入"推锁舌"状态:开机界面 + 电机正转
  * @param  title 开锁期间标题行显示的文字
@@ -385,8 +585,15 @@ static void lock_tick(void)
                 L9110S_control(MOTOR_BRAKE);
                 s_state = LOCK_IDLE;
 
-                lock_lcd_set_title((uint8_t *)"PASSWORD", BLUE);
-                lock_clear_input();
+                // 有大提示区被占着(管理员模式/指纹录入/刷卡录入/蓝牙配网)就别去
+                // 刷界面:那几个流程是在锁还没动作完时就开始往屏上写字的,这一刷
+                // 会把它们的提示盖掉 —— 而且刷的是密码输入行(row 160~191),正好
+                // 落在大提示区的第二、三行里,盖出来的是一屏花字。
+                // 等它们放手(lock_screen_give)时自己会补上这一下。
+                if (s_lcd_hold == 0)
+                {
+                    lock_lcd_show_idle();
+                }
 
                 printf("已回锁\r\n");
 
@@ -471,7 +678,13 @@ static void lock_verify(void)
     }
 
     printf("密码正确\r\n");
-    lock_open((uint8_t *)"UNLOCKED", GREEN);
+
+    // 开锁受理了才进管理员模式 —— 被拒(已经有别的开锁流程在跑)说明这次不是
+    // "我刚开的锁",不该把管理员权限交出去。
+    if (lock_open((uint8_t *)"UNLOCKED", GREEN))
+    {
+        admin_begin();
+    }
 }
 
 
@@ -484,6 +697,16 @@ static void lock_verify(void)
  */
 static void lock_handle_key(uint8_t key)
 {
+    // ⚠ 管理员模式必须排在下面 s_unlocking 那行**之前**。
+    //   它的窗口是"开锁的同时"打开的(见 admin.h),此刻 s_unlocking 正好是 1;
+    //   排在后面的话,这 4 秒里所有的键都会被下面这行原样吞掉,
+    //   111#/222#/333#/444# 一个也按不进去。
+    if (admin_is_active())
+    {
+        admin_handle_key(key);
+        return;
+    }
+
     if (s_unlocking)
     {
         return;
@@ -563,26 +786,37 @@ static void lock_task(void *arg)
     for (;;)
     {
         // ── 远程命令优先 ──
-        // 它比按键稀少得多,时效性又强(按了"关锁"就该马上关),
-        // 所以每拍先看它。收到就 continue,免得连着两条命令要等两拍。
+        // 它比按键稀少得多,时效性又强(按了"关锁"就该马上关),所以每拍先看它。
         if ((lock_cmd_queue != NULL) &&
             (xQueueReceive(lock_cmd_queue, &cmd, 0) == pdPASS))
         {
             lock_handle_remote((lock_cmd_t)cmd);
-            continue;
         }
-
-        // ── 再看按键。队列空的话就在这里睡满这一拍 ──
-        if (xQueueReceive(cy9cm_key_queue, &key, pdMS_TO_TICKS(LOCK_TICK_MS)) == pdPASS)
+        // ── 再看按键。两个队列都空的话,就在这里睡满这一拍 ──
+        else if (xQueueReceive(cy9cm_key_queue, &key, pdMS_TO_TICKS(LOCK_TICK_MS)) == pdPASS)
         {
             lock_handle_key(key);
-            continue;
         }
 
-        // ── 两个队列都空:这一拍用来推进状态机 ──
-        // (按键/命令走了 continue 的那几拍不推进也没关系 —— 那些分支都是
-        //  几个微秒就返回的,下一拍立刻就到,状态机晚 20ms 推进看不出来)
+        // ── 不管这一拍是收了命令、收了按键、还是睡过去的,都要推这两件事 ──
+        //
+        // ⚠ lock_tick() 必须排在 admin_tick() **前面**。它管的是电机的刹车,
+        //   是全系统最不能等的一件事;而 admin_tick() 一旦要画屏,一次就是
+        //   一两百毫秒(大提示区一行 = 20 个字符 × 24×12 像素,而底层走的是
+        //   LCD_Set_Point —— 一个像素开一次 ST7789 地址窗口,慢得离谱)。
+        //   让画屏排在刹车前面,锁舌就会顶到头还继续转,堵转发热。
+        //
+        //   原先这里只有"两个队列都空"那一拍才推,而且 admin_tick() 在前、
+        //   lock_tick() 在后,理由是"按键分支几个微秒就返回,晚一拍看不出
+        //   来"。管理员模式把那个前提推翻了:密码开锁成功那一刻,
+        //   admin_begin() 就在同一条调用链上
+        //   (lock_handle_key → lock_verify → lock_open → admin_begin),
+        //   当时它是同步画整屏菜单的,于是 lock_tick() 整整一秒回不来 ——
+        //   上板现象就是"密码开锁后电机一直转,时间远远超过
+        //   LOCK_MOTOR_OPEN_MS"。现在两头一起堵:这里每拍都推、刹车排在前面,
+        //   admin.c 那边则把所有画屏欠到 lock_motor_running() == 0 之后才补。
         lock_tick();
+        admin_tick();
     }
 }
 
@@ -622,9 +856,17 @@ void lock_tasks_init(void)
         printf("锁控队列创建失败:堆不够了\r\n");
     }
 
-    // 栈 320 字(1280 字节):lock_tick()/lock_verify() 会调到
-    // LCD_Font_Dis_Ascii(),它自带 100 字节的 buff,再加上 printf,留足余量。
-    xTaskCreate(lock_task, "lock", 320, NULL, 2, NULL);
+    // 栈 384 字(1536 字节)。
+    //   原来是 320:lock_tick()/lock_verify() 会调到 LCD_Font_Dis_Ascii(),
+    //   它自带 100 字节的 buff,再加上 printf,320 就够。
+    //   加管理员模式之后调用链深了一层 ——
+    //     lock_task → lock_handle_key → admin_handle_key → admin_submit
+    //               → admin_show_msg → lock_lcd_big_line(自带 21 字节 buf)
+    //               → lock_lcd_text → LCD_Font_Dis → LCD_Font_Dis_Ascii
+    //   比原来多了两三层栈帧。栈溢出会被 vApplicationStackOverflowHook 抓住,
+    //   而那个钩子是"删掉任务再死循环",上板表现是"按了没反应、串口也不打了",
+    //   极难往栈上想。多切 256 字节(堆还剩 1.6KB 以上)换掉这个隐患是划算的。
+    xTaskCreate(lock_task, "lock", 384, NULL, 2, NULL);
 }
 
 
