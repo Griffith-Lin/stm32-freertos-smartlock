@@ -23,6 +23,7 @@ static uint8_t s_buf[WIFI_CFG_DATA_BYTES];
 
 
 /**
+ * 🟡 L1 架构代码 —— 它的 0/1 决定 wifi_task 下一步是照常联网还是去开蓝牙配网;先验标志再读那 97 字节是为开机路径省一次 I2C,两个字段尾字节钉 '\0' 是防 EEPROM 里上次写坏的残渣把 strcpy 冲出去
  * @brief  从 EEPROM 读 WiFi 凭据
  * @param  ssid 输出:WiFi 名(至少 WIFI_CFG_SSID_MAX + 1 字节)
  * @param  pwd  输出:密码  (至少 WIFI_CFG_PWD_MAX  + 1 字节)
@@ -67,6 +68,7 @@ uint8_t wifi_cfg_load(char *ssid, char *pwd)
 
 
 /**
+ * 🟡 L1 架构代码 —— 三步写序(清标志 → 写数据 → 落标志)是掉电安全的本体:写 97 字节要跨 7 个 EEPROM 页、每页都要等器件忙 10ms,配网刚成功时用户可能正碰板子;顺序反了就会读出"新 SSID + 旧密码"且无法自愈
  * @brief  把 WiFi 凭据写进 EEPROM
  * @param  ssid WiFi 名;  pwd 密码
  * @return 1 = 写成功;0 = 长度不合法(一个字都没写)

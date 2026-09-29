@@ -93,6 +93,7 @@ static uint8_t      s_close_req;        // 1 = 有人要求立刻回锁
 
 
 /**
+ * 🟢 L2 工具代码 —— 契约两条:文字必须是 ASCII(>= 0xA1 的字节会被当 GBK 汉字查字库画成乱码),且靠 LCD_Lock 把整行当一个事务,否则别的任务会把自己的字插进这一行
  * @brief  在 LCD 上画一行 ASCII 文字
  * @param  row/col  左上角坐标
  * @param  size     字号,只支持 16 / 24 / 32
@@ -109,10 +110,21 @@ static uint8_t      s_close_req;        // 1 = 有人要求立刻回锁
 static void lock_lcd_text(uint16_t row, uint16_t col, uint8_t size,
                           uint16_t fg, uint16_t bg, uint8_t *text)
 {
+    // 为什么要在这外面再套一层锁(不是多余):
+    //   lcd.c 里的 LCD_Set_Point() 已经逐像素自动上锁了,那保证的是
+    //   "**每个像素**画在正确的位置上"——不会串位、不会花屏。
+    //   但它挡不住另一种乱:本任务刚画完 "PASS",wifi 任务插进来画了
+    //   "FINGER  ",回来接着画 "WORD" ——每个字位置都对,可标题行成了
+    //   "PASSFINGERWORD"。像素没错,内容错了。
+    //   把整串字当一个事务,这一整行才有意义。
+    // 互斥量是递归的,内层 LCD_Set_Point 的自动上锁不会死锁。
+    LCD_Lock();
     LCD_Font_Dis(row, col, size, fg, bg, text);
+    LCD_Unlock();
 }
 
 /**
+ * 🟢 L2 工具代码 —— 把 s_input_len 翻译成 '*'/'-' 掩码再刷屏;数错一位只是界面难看,校验用的 s_input[] 不受它影响
  * @brief  重画下面那行密码掩码:已输入的显示 '*' ,还没输入的显示 '-'
  */
 static void lock_lcd_input(void)
@@ -131,6 +143,7 @@ static void lock_lcd_input(void)
 }
 
 /**
+ * 🟢 L2 工具代码 —— 两行复位(长度清零 + 重画),键盘侧和状态机侧都复用它,自己不带任何策略
  * @brief  清空已输入的内容并刷新界面
  */
 static void lock_clear_input(void)
@@ -140,6 +153,7 @@ static void lock_clear_input(void)
 }
 
 /**
+ * 🟢 L2 工具代码 —— 输出契约固定:标题行红字 ERROR 停 800ms 再变回 PASSWORD;唯一要守的约束是用 vTaskDelay 让出 CPU 而不是 Delay_Ms 忙等
  * @brief  在标题行闪一下红色的 ERROR,再恢复蓝色的 PASSWORD
  * @note   必须在任务上下文调用(内部用 vTaskDelay 让出 CPU)。
  *         这 800ms 里 lock_task 自己就停在本函数里,期间按的键会堆在
@@ -159,6 +173,7 @@ static void lock_lcd_show_error(void)
 
 
 /**
+ * 🟡 L1 架构代码 —— EEPROM 布局(0xA5 标志 + 长度 + 6 字节密码同页一次写完,不会留半截数据)和"载入 RAM 后不再碰 EEPROM、改密码要重启生效"的生命周期都定在这里
  * @brief  从 EEPROM 加载密码;如果是第一次上电(没有有效标志),写入默认密码
  * @note   只在裸机阶段调用一次。加载之后密码缓存进 s_pwd[],任务阶段不再访问
  *         EEPROM —— 这样既避开了 I2C 总线的并发问题,也不用在任务里等 tWR。
@@ -228,6 +243,7 @@ void lock_init(void)
 
 
 /**
+ * 🟢 L2 工具代码 —— 契约只有"追加一位、满 6 位就丢";越界写 s_input[] 的可能被开头那行长度判断堵死
  * @brief  收下一个数字键:追加到输入缓冲区
  * @note   已经输满 6 位之后再多按的数字直接丢掉 —— 必须按 '#' 确认
  *         或按 '*' 清空重来,避免"多按一下就把密码顶掉"这种别扭行为。
@@ -247,18 +263,21 @@ static void lock_input_digit(uint8_t digit)
 }
 
 
+// 🟢 L2 工具代码 —— 输入输出契约一句话说完:把标题行整行盖成传入文字(少于 8 字符盖不干净,右边会留上一行残影)
 void lock_lcd_set_title(uint8_t *title, uint16_t color)
 {
     lock_lcd_text(LOCK_LCD_TITLE_ROW, LOCK_LCD_TITLE_COL, LOCK_LCD_TITLE_SIZE,
                   color, WHITE, title);
 }
 
+// 🟢 L2 工具代码 —— 无副作用的快照查询,只返回 s_unlocking;它只是给调用方做预检,真正仲裁在 lock_open 的临界区里
 uint8_t lock_is_busy(void)
 {
     return s_unlocking;
 }
 
 /**
+ * 🟡 L1 架构代码 —— 状态机入口的次序就是设计:先写 s_state 再刷 LCD/推电机,避免出现 s_unlocking=1 而 s_state=IDLE 的自相矛盾窗口,并清掉上一轮的 s_close_req
  * @brief  进入"推锁舌"状态:开机界面 + 电机正转
  * @param  title 开锁期间标题行显示的文字
  * @param  color 标题颜色
@@ -278,9 +297,9 @@ static void lock_begin_opening(uint8_t *title, uint16_t color)
     lock_lcd_set_title(title, color);
     lock_clear_input();
 
-    // 开锁行程:正转推出去。停不停由 lock_tick() 在 500ms 后决定 ——
+    // 开锁行程:正转推出去,转多久由 lock_tick() 按 LOCK_MOTOR_OPEN_MS 决定 ——
     // 万一行程中途收到关锁命令,那边刹车后会直接转 CLOSING。
-    // (上面刷 LCD 花掉的几毫秒会算进行程里,500ms 的尺度上无所谓)
+    // (上面刷 LCD 花掉的几毫秒会算进行程里,几百 ms 的尺度上无所谓)
     L9110S_control(MOTOR_FORWARD);
 
     printf("开锁中,保持 %d 秒后自动回锁(期间收到关锁命令会立刻回锁)\r\n",
@@ -288,6 +307,7 @@ static void lock_begin_opening(uint8_t *title, uint16_t color)
 }
 
 /**
+ * 🟡 L1 架构代码 —— 自动回锁和远程关锁共用的唯一出口:先置 CLOSING 再反转电机,维持"s_state 与实际动作一致"这条不变量
  * @brief  进入"收锁舌"状态:电机反转
  * @note   自动回锁和被远程关锁打断,走的都是这一个出口。
  */
@@ -305,6 +325,7 @@ static void lock_begin_closing(void)
 }
 
 /**
+ * 🟡 L1 架构代码 —— 四个状态的转移和刹车时机全在这一个 switch 里;关锁请求在 OPENING(等到刹车点)和 OPEN(立即)的不同落点,就是"保持期可被打断"的实现
  * @brief  推进锁的状态机 —— 由 lock_task 每 LOCK_TICK_MS 调一次
  * @note   电机只在三个"动作中"的状态里被操作,而推进又只发生在 lock_task
  *         这一个任务里,所以 L9110S 的 FORWARD/REVERSE/BRAKE 天然是串行的,
@@ -323,7 +344,8 @@ static void lock_tick(void)
     {
         // ── 正在推锁舌:等行程走完,然后刹车 ──
         case LOCK_OPENING:
-            if ((now - s_phase_start) >= LOCK_MOTOR_MS)
+            // 推锁舌 —— 用"开锁"的行程时间
+            if ((now - s_phase_start) >= LOCK_MOTOR_OPEN_MS)
             {
                 L9110S_control(MOTOR_BRAKE);
 
@@ -357,7 +379,8 @@ static void lock_tick(void)
 
         // ── 正在收锁舌:等行程走完,收工 ──
         case LOCK_CLOSING:
-            if ((now - s_phase_start) >= LOCK_MOTOR_MS)
+            // 收锁舌 —— 用"回锁"的行程时间(和开锁是两个独立可调的值)
+            if ((now - s_phase_start) >= LOCK_MOTOR_CLOSE_MS)
             {
                 L9110S_control(MOTOR_BRAKE);
                 s_state = LOCK_IDLE;
@@ -380,6 +403,7 @@ static void lock_tick(void)
 }
 
 /**
+ * 🟡 L1 架构代码 —— 临界区里做 check-and-set 抢 s_unlocking 开锁标志,分开写会让两个来源(指纹/云端)同时推电机;非阻塞返回是远程关锁能及时被响应的前提
  * @brief  开锁 —— 本地开锁来源的公共出口(密码、指纹都走这里)
  * @param  title 开锁期间标题行显示的 ASCII 文字
  * @param  color 标题颜色
@@ -417,6 +441,7 @@ uint8_t lock_open(uint8_t *title, uint16_t color)
 
 
 /**
+ * 🟡 L1 架构代码 —— 业务裁决点:位数不足也算错,先清输入行再闪红字(反了会看着像"密码还在,但已经错了");通过后走 lock_open 公共出口而不自己碰电机
  * @brief  按下 '#' :校验输入的密码
  * @note   位数不对也算错误,一并清空重输并显示红色 ERROR。
  *         先清输入行再弹错误提示 —— 反过来的话,ERROR 停留的 800ms 里
@@ -451,6 +476,7 @@ static void lock_verify(void)
 
 
 /**
+ * 🟡 L1 架构代码 —— 交互策略集中点:'0'~'9'/'*'/'#' 各自去哪、开锁期间一律吞掉,行为规则整套由这一个 if-else 链定义
  * @brief  处理一个触摸板按键
  * @param  key '0'~'9' / '*' / '#'
  * @note   开锁/回锁过程中一律忽略 —— 那时 LCD 上显示的是 "UNLOCKED",
@@ -479,6 +505,7 @@ static void lock_handle_key(uint8_t key)
 }
 
 /**
+ * 🟡 L1 架构代码 —— 云端命令的分流策略:开锁借 lock_open 公共出口(忙则拒并打印原因),关锁只置 s_close_req 让 lock_tick 选刹车时机,绝不直接动电机
  * @brief  处理一条远程锁控命令(MQTT 云端下发)
  * @param  cmd LOCK_CMD_OPEN / LOCK_CMD_CLOSE
  * @note   **只在本任务里跑**,所以 s_close_req 不需要临界区保护。
@@ -517,6 +544,7 @@ static void lock_handle_remote(lock_cmd_t cmd)
 }
 
 /**
+ * 🟡 L1 架构代码 —— 任务与队列结构:远程命令优先→按键次之→两队列都空才推进状态机,20ms 一拍是"命令及时"与"不空转"的折中
  * @brief  密码锁任务:消费触摸板按键 + 远程锁控命令,并推进锁的状态机
  * @note   为什么要周期性醒来(而不是像以前那样 portMAX_DELAY 死等)?
  *           1) 有两个队列要收(按键、远程命令),不引入队列集就只能轮询;
@@ -559,6 +587,7 @@ static void lock_task(void *arg)
 }
 
 
+// 🟡 L1 架构代码 —— 投递策略是"非阻塞、满就丢":xQueueSend 超时填 0,宁丢命令也不让 wifi 任务卡住拖垮 MQTT 心跳
 uint8_t lock_post_cmd(lock_cmd_t cmd)
 {
     uint8_t v = (uint8_t)cmd;
@@ -582,6 +611,7 @@ uint8_t lock_post_cmd(lock_cmd_t cmd)
 }
 
 
+// 🟡 L1 架构代码 —— 资源额度在这里定死:队列深 4 吸收突发、任务栈 320 字给 LCD 字库查找的 100 字节 buff 留余量,分小了就是丢命令或栈溢出
 void lock_tasks_init(void)
 {
     // 深度 4:远程命令本来就很稀疏,4 条足够吸收"开锁期间连来几条"的突发。

@@ -40,6 +40,7 @@ void mg200_erase_all(void);
 void mg200_compare(void);
 
 /**
+ * 🟡 L1 架构代码 —— 任务里唯一能用的收帧入口,选错函数(mg200_rec)任务就永久卡死;timeout_ms 是"找帧头 + 收满 8 字节"的总时限,不是每字节时限
  * @brief  带超时的收帧(放进 FreeRTOS 任务里必须用这个,不能用 mg200_rec)
  * @param  rec        输出:收到的应答
  * @param  timeout_ms 从开始找帧头算起的**总**超时,单位 ms

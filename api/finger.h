@@ -20,6 +20,7 @@
 //   这里统一用带超时的 mg200_rec_timeout()。
 
 /**
+ * 🟡 L1 架构代码 —— 任务栈(256 字)和优先级(2)从这里定下去,而堆只剩约 1.2KB:改这个数字必须连 heap_4 的余量一起算,否则失败现象是 malloc 失败钩子死循环
  * @brief  创建指纹开锁任务
  * @return 无
  * @note   在 vTaskStartScheduler() 之前调用。

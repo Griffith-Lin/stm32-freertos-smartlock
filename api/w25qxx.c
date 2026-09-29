@@ -19,6 +19,7 @@
 
 //pa4 cs   pa5 sclk  pa6 miso  pa7 mosi
 /*
+🔴 L0 生死线代码 —— 0x90 之后必须补齐 3 个 dummy 地址字节才开始收 ID,少发一个读回的 ID 就整体错位;CS 的拉低拉高全由这里手动负责,时机错了帧就散
 Function name:W25Qxx_Read_ID
 Description:读取芯片ID
 param:None
@@ -58,6 +59,7 @@ void W25Qxx_Read_ID(void)
                                    //%#x 对 0 有特殊处理 — 不加 0x 前缀。这是 C 标准规定：
 }
 
+// 🔴 L0 生死线代码 —— 同一帧 0x90+3 个 dummy 改用软件 SPI 重发:每一位靠 GPIO 翻转、和硬件 SPI 是两套独立时序,只能拿"读出的 ID 是否等于 0xEF16"互相验证
 void W25Qxx_simulation_Read_ID(void)
 {
     uint16_t id = 0;
@@ -75,6 +77,7 @@ void W25Qxx_simulation_Read_ID(void)
     printf("id=%#x\r\n", id);
 }
 
+// 🔴 L0 生死线代码 —— WEL 位是 CS 上升沿锁存的:发完 0x06 不把 CS 拉高,这次写使能等于没发,随后的 0x02/0x20 会被芯片静默丢弃——命令看着都发了,数据一个字节没动
 // 不能写入有两种可能：1、上锁 2、已被写入，未复原成0xff
 // 写使能
 void W25Qxx_write_enable(void)
@@ -87,6 +90,7 @@ void W25Qxx_write_enable(void)
     SPI_CS = 1;
 }
 
+// 🔴 L0 生死线代码 —— 0x04 清 WEL 同样要 CS 上升沿才生效;漏掉这一步芯片会长时间保持"可写",之后任何误发的 0x02/0x20 都会被硬件当真执行,数据被改还没人知道
 // 写禁能
 void W25Qxx_write_disable(void)
 {
@@ -98,6 +102,7 @@ void W25Qxx_write_disable(void)
     SPI_CS = 1;
 }
 
+// 🔴 L0 生死线代码 —— 全文件每个擦写前后的 while 等待都押在这一位上:bit0 取错或掩码写错位,等待会瞬间通过,下一条命令落进芯片内部写周期被丢掉,擦写变成"看着成功、实际没执行"
 // 读状态寄存器1的BUSY位
 uint8_t W25Qxx_Read_SR1_busy(void)
 {
@@ -119,6 +124,7 @@ uint8_t W25Qxx_Read_SR1_busy(void)
     }
 }
 
+// 🔴 L0 生死线代码 —— 0x01+0xFF 一把置起全部 BP 保护位把整片 flash 锁成只读;状态寄存器没有写回确认,值或多发少发一个字节的后果(锁没锁上)不能靠现象判断,只能对着手册的位表查
 // 上锁flash
 void W25Qxx_Lock(void)
 {
@@ -128,6 +134,7 @@ void W25Qxx_Lock(void)
     SPI_CS = 1;
 }
 
+// 🔴 L0 生死线代码 —— 0x01+0x00 0x00 清保护位,是把上锁芯片救回可写状态的唯一手段;这两个数据字节对应 SR1/SR2,少发一个芯片就认为命令没结束,保护位原样留着
 // 初始化状态寄存器1 2 （可解锁flash）
 void W25Qxx_write_SR1(void)
 {
@@ -141,10 +148,20 @@ void W25Qxx_write_SR1(void)
     SPI_CS = 1;
 }
 
+// 🔴 L0 生死线代码 —— 擦除不可撤销,而且这里的换算有坑:uint8_t 的 sector *=4096 后再截回 uint8_t,4096 是 256 的倍数、低 8 位恒为 0,不管传第几号扇区发出去的都是 0x000000,永远只擦第 0 个扇区
 // 扇区擦除（最小擦除单位）
 void W25Qxx_Sector_Erase(uint8_t sector)
 {
-    sector *= 4096;
+    // ⚠ 这里原本写的是 `sector *= 4096;`,那是**恒等于 0** 的:
+    //   sector 的类型是 uint8_t,而 4096 = 16 × 256 —— 任何整数乘 4096 都是
+    //   256 的倍数,截断回 8 位之后低 8 位必然全 0。
+    //   后果:无论传第几号扇区,发出去的 24 位地址永远是 0x000000,
+    //   **永远只擦第 0 个扇区,而且一声不吭**(读 SR1 也看不出异常)。
+    //   所以地址必须存在 uint32_t 局部变量里,不能写回 8 位的形参。
+    //   (顺带:uint8_t 形参本身最多也只能寻址 256 × 4KB = 1MB,够不到
+    //    W25Q64 的 8MB。本函数目前全工程没有调用点,先只修正确性,
+    //    要接到业务里之前建议按上面 W25Qxx_Block_Erase 的样子改成收绝对地址。)
+    uint32_t addr = (uint32_t)sector * 4096u;
 
     while (W25Qxx_Read_SR1_busy())
         ; // 阻塞等待BUSY位置0
@@ -155,9 +172,9 @@ void W25Qxx_Sector_Erase(uint8_t sector)
     SPI_Echo(0x20);
 
     // 24位地址，决定从哪个地址开始往后擦除
-    SPI_Echo(sector >> 16);
-    SPI_Echo(sector >> 8);
-    SPI_Echo(sector >> 0);
+    SPI_Echo(addr >> 16);
+    SPI_Echo(addr >> 8);
+    SPI_Echo(addr >> 0);
 
     SPI_CS = 1;
     while (W25Qxx_Read_SR1_busy())
@@ -165,6 +182,7 @@ void W25Qxx_Sector_Erase(uint8_t sector)
     W25Qxx_write_disable();
 }
 
+// 🔴 L0 生死线代码 —— 一条 0xD8 就是 64KB(16 个扇区)一起擦,不可撤销;地址低 16 位硬件根本不看,传块中间的地址照样从块头开擦,以为只动一小块结果整块数据没了
 // 块擦除
 void W25Qxx_Block_Erase(u32 addr)
 {
@@ -183,6 +201,7 @@ void W25Qxx_Block_Erase(u32 addr)
     W25Qxx_write_disable();
 }
 
+// 🔴 L0 生死线代码 —— 0xC7 把 8MB 整片抹成 0xFF,没有"只擦一部分"的余地;误调用一次全部数据不可恢复,只能拆机重新烧录
 // 全片擦除
 void W25Qxx_Chip_Erase(void)
 {
@@ -238,6 +257,7 @@ void W25Qxx_Page_Program(uint8_t block,uint8_t sector,uint8_t page_addr,uint8_t*
 */
 
 /**
+ * 🟡 L1 架构代码 —— 页对齐和"len 不超 256"两个前提已经随着被注释掉的检查代码移交给调用方了:传错就是硬件在页内回卷,页尾写着新数据、页头被悄悄改掉;拆不拆页是上层策略问题
  * @brief  W25Qxx 单页编程 (底层驱动)
  * @param  addr: 24位线性绝对地址 (必须是 256 的整数倍，即页对齐)
  * @param  data: 指向待写入数据的指针 (长度固定为 256 字节)
@@ -328,6 +348,7 @@ uint8_t W25Qxx_Page_Read(uint32_t addr,uint8_t *data,uint32_t len)
 */
 
 /**
+ * 🟡 L1 架构代码 —— 0x03 支持任意起点、地址自己进位,所以这里刻意不等 BUSY、不做页对齐;这个"读无前置条件"的结论只对读成立,不能照抄到写/擦函数上当模板
  * @brief  W25Qxx 读取数据 (支持任意地址、任意长度连续读取)
  * @param  addr: 24位线性绝对起始地址 (无需页对齐)
  * @param  data: 指向接收数据缓冲区的指针 (输出)
@@ -362,6 +383,7 @@ int8_t W25Qxx_Read_Bytes(uint32_t addr, uint8_t *data, uint32_t len)
     return 0;
 }
 
+// 🟡 L1 架构代码 —— 先按 addr%256 算出首段"写到页尾还剩几字节",之后逐段推进;首段长度算错就会触发硬件页内回卷,把本页开头刚写的数据覆盖掉,而且它不管调用方给的长度是否页对齐
 // 跨页写函数
 void W25Qxx_CrossPage(uint32_t addr, const uint8_t *buff, uint32_t len)
 {

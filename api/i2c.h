@@ -28,6 +28,7 @@ extern const i2c_bus_t i2c_bus_cy9cm;    // CY8CMBR3116 电容按键:SCL=PB6 SDA
 extern const i2c_bus_t i2c_bus_at24c04;  // AT24C04A EEPROM   :SCL=PA8 SDA=PC9
 
 /**
+ * 🔴 L0 生死线代码 —— 声明即契约:必须早于任何 i2c_master_xxx 调用,它决定 SCL/SDA 的输出类型与上电电平,漏调或次序颠倒总线就一直不工作
  * @brief  初始化一条 bit-bang I2C 总线上的 SCL/SDA 两个引脚
  * @param  bus 总线描述,传上面两个常量的地址
  * @return 无

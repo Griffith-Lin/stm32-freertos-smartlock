@@ -1,5 +1,6 @@
 #include "led.h"
 
+// 🔴 L0 生死线代码 —— 先置位、后切输出模式的顺序反了不行:GPIO 复位初值 ODR=0,先 Init 会让 PB8/PB9 上电瞬间拉低,两颗低电平亮的灯各闪一下
 // pb8 pb9  io口电压为高时，熄灭
 void led_Config(void)
 {

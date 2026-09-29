@@ -25,6 +25,7 @@
 #define WIFI_CFG_PWD_MAX    63      // WPA2 密码最长 63 个 ASCII 字符
 
 /**
+ * 🟡 L1 架构代码 —— 返回值是"有没有可用凭据"的唯一判据,直接决定 wifi_task 是照常联网还是去开蓝牙配网;返回 0 时输出缓冲一字未动,调用方得先看返回值再决定用不用
  * @brief  从 EEPROM 读 WiFi 凭据
  * @param  ssid 输出:WiFi 名,缓冲至少 WIFI_CFG_SSID_MAX + 1 字节
  * @param  pwd  输出:密码,  缓冲至少 WIFI_CFG_PWD_MAX  + 1 字节
@@ -36,6 +37,7 @@
 uint8_t wifi_cfg_load(char *ssid, char *pwd);
 
 /**
+ * 🟡 L1 架构代码 —— 写入顺序(清标志 → 写数据 → 最后落标志)和"只在配网成功那一刻调"都是设计的一部分:掉电撕裂的凭据比没有凭据更糟,设备会拿着一对连不上的旧密码无限重试
  * @brief  把 WiFi 凭据写进 EEPROM(蓝牙配网成功后调用)
  * @param  ssid WiFi 名,长度 1 ~ WIFI_CFG_SSID_MAX
  * @param  pwd  密码,  长度 0 ~ WIFI_CFG_PWD_MAX(开放热点没有密码)

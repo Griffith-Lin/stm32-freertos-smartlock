@@ -5,6 +5,7 @@ volatile Key_t keys[3] = {0};
 uint8_t flag = 0;        // 长按置位(由 key_action_task 置,供主循环观察)
 QueueHandle_t key_queue = NULL;   // 事件队列:key_scan_task 生产, key_action_task 消费
 
+// 🔴 L0 生死线代码 —— PC13 是低有效、靠内部上拉保持空闲高:模式/上下拉配错,空闲就会被读成 0,开机瞬间就被状态机判成"按下"乃至长按,直接进 STANDBY
 // pc13 key2:输入模式+上拉,按下接地(低有效)
 void key_Config(void)
 {
@@ -24,6 +25,7 @@ void key_Config(void)
 }
 
 /**
+ * 🟡 L1 架构代码 —— 4 状态 × 3 拍消抖的状态机:"3 拍"只有配合 10ms 调用周期才等于 30ms,状态跳转或阈值改错的典型现象是"按一下算两下"/长按永不触发
  * @brief 按键状态机(纯逻辑,不知道也不关心谁调用它)
  * @param key 按键对象指针
  * @note 现在由 key_scan_task 每 10ms 调用一次(任务上下文,不是中断!)
@@ -93,6 +95,7 @@ void ProcessKey(volatile Key_t *key)
 // ==================== 任务层 ====================
 
 /**
+ * 🟡 L1 架构代码 —— vTaskDelayUntil 的固定 10ms 节拍就是消抖计数的时基(3 拍=30ms):换成相对延时 vTaskDelay 节拍会漂,消抖时长跟着变,且事件投递的"PRESS 不发业务层"取舍在这里
  * @brief 生产者:按键扫描任务,每 10ms 扫一次状态机
  * @note vTaskDelayUntil 固定节拍不漂移;有 SHORT/LONG 事件就塞进队列
  */
@@ -119,6 +122,7 @@ static void key_scan_task(void *arg)
 }
 
 /**
+ * 🟡 L1 架构代码 —— 长短按到动作的映射全在这个 switch 里,长按分支还要调 mcu_enter_standby() 且不返回:事件判反的后果是"按一下就被强制待机",只能靠 PA0 唤醒复位
  * @brief 消费者:业务处理任务,想加功能只改这里
  * @note 没事件时阻塞在 xQueueReceive,不占 CPU
  */
@@ -148,6 +152,7 @@ static void key_action_task(void *arg)
 }
 
 /**
+ * 🟡 L1 架构代码 —— 队列深度(8)和两个任务的栈/优先级(scan=2、action=3)在这里定:堆只有 8KB 且栈单位是字,数字给错的报应要么是 malloc 失败钩子死循环要么是栈溢出
  * @brief 按键模块初始化:建队列 → 配 GPIO → 创建两个任务
  * @note 在 vTaskStartScheduler() 之前调用
  */

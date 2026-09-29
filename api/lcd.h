@@ -46,7 +46,17 @@ void LCD_Send_Data(u8 data);
 void LCD_Send_16bit(u16 data);
 void LCD_Set_Region(u16 row_s,u16 row_e,u16 col_s,u16 col_e);
 void LCD_Clear(u16 row_s,u16 row_e,u16 col_s,u16 col_e,u16 color);
-void LCD_Init(void);
+void LCD_Init(void);   /* 内部顺带创建 LCD 互斥量,必须在任何画屏动作之前调用 */
+
+/* LCD 互斥量 —— 见 lcd.c 顶部的大段说明。
+ * 底层的 LCD_Set_Point/LCD_Clear/LCD_Dis_Pic/LCD_FillRectangle 已经各自
+ * 自动上锁,所以"画面会不会串位"不用调用方操心。
+ * 调用方只在需要**整段画面作为一个事务**(不希望别的任务把它切成两半)时才
+ * 手动 LCD_Lock()/LCD_Unlock(),例如 lock.c 的 lock_lcd_text()。
+ * 互斥量是递归的,已经自动上锁的函数里再套一层不会死锁。
+ * ⚠ 调度器启动之前这两个函数是空操作,可以直接调。 */
+void LCD_Lock(void);
+void LCD_Unlock(void);
 void LCD_Set_Point(u16 row,u16 col,u16 color);
 
 

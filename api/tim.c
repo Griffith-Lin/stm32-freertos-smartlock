@@ -1,5 +1,6 @@
 #include "tim.h"
 
+// 🟡 L1 架构代码 —— 1ms 时基的分频/重载换算,算错所有超时和延时全部失真
 // apb2预分频系数为1，定时器不倍频。84MHz,分频系数84，实际频率1MHz，一次1us，arr为1000，周期为1ms
 void TIM10_Task_Config(uint32_t psc, uint32_t arr)
 {
@@ -40,6 +41,7 @@ void TIM10_Task_Config(uint32_t psc, uint32_t arr)
 }
 
 volatile uint32_t tim10_tick_ms = 0;
+// 🟢 L2 工具代码 —— 忙等够 ms 就返回,契约只有“传多少毫秒等多少”,无符号减法保证约 49.7 天回绕也不出错;唯一前提是 TIM10 中断在跑
 void TIM10_delay(uint32_t ms)
 {
     uint32_t start = tim10_tick_ms;
@@ -47,11 +49,13 @@ void TIM10_delay(uint32_t ms)
         ; // 无符号减法，2^32ms(约49.7天)回绕也正确
 }
 
+// 🟢 L2 工具代码 —— 只把 volatile 计数器当前值读出来,输入为空、输出毫秒数;怎么算时间差(now-start)是调用者的事
 uint32_t GetTim10Tick(void)
 {
     return tim10_tick_ms; // TIM10 1ms中断维护的毫秒计数
 }
 
+// 🔴 L0 生死线代码 —— 整机 1ms 心跳的唯一来源:漏清 UIF 会反复进中断饿死主循环,tick 不增则 TIM10_delay、MG200 超时、L9110S_move 全部永久卡死
 // TIM10 更新中断:只维护毫秒时基(服务 L9110S_move 等)
 // 按键扫描已搬到 FreeRTOS 的 key_scan_task(每10ms一次),不再进中断
 void TIM1_UP_TIM10_IRQHandler(void)

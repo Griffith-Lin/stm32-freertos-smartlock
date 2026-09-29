@@ -27,6 +27,7 @@
 #define FINGER_DETECT() (GPIO_ReadInputDataBit(GPIOC, GPIO_Pin_0) == SET)
 
 /**
+ * 🟡 L1 架构代码 —— 帧同步的前置条件:上一次没收干净的尾巴留着会和下一次应答拼在一起,让同步从错误的 0x6C 开始;它直接读 DR 清空 RX,和协议层是"谁先读走 RXNE 谁赢"的关系
  * @brief  丢掉 USART6 接收缓冲里的残留字节
  * @note   上一次没收干净的尾巴(校验失败的帧、上电毛刺)如果留在 RX 里,
  *         会和下一次的应答拼在一起,让帧同步从错误的 0x6C 开始。
@@ -41,6 +42,7 @@ static void usart6_flush(void)
 }
 
 /**
+ * 🟡 L1 架构代码 —— 0x51 的 para 是特征码缓冲区号、0x71 才是 1:N 搜索,"result==0 算命中"的契约集中在返回值判断上:任一步判反,现象都是"手指按了但永远开不了锁"
  * @brief  采一次指纹,并在模块的整库中搜索(1:N)
  * @param  id 输出:匹配到的指纹编号(只在返回 1 时有意义)
  * @return 1 = 匹配成功;0 = 采图失败 / 没匹配上 / 模块没应答
@@ -92,6 +94,7 @@ static uint8_t finger_match(uint8_t *id)
 }
 
 /**
+ * 🟡 L1 架构代码 —— 业务主流程 + 与密码任务共用 LCD 的互斥策略(lock_is_busy 预检):几段延时/顺序改错会出现同一次按压被反复采图,或两个任务抢着画屏导致花屏
  * @brief  指纹开锁任务
  * @note   平时 100ms 睡一次,只读一个 GPIO,几乎不占 CPU。
  *         检测到手指后的流程:等手指按稳 → 采图 → 比对 → 通过就走开锁流程。
@@ -149,6 +152,7 @@ static void finger_task(void *arg)
     }
 }
 
+// 🟡 L1 架构代码 —— 栈 256 字是实测定的(任务里要跑 printf 和 MG200 收发),加完它堆只剩 1240 字节:再添任务/队列前必须先读 xFreeBytesRemaining,不够就是 malloc 失败钩子里的死循环
 void finger_tasks_init(void)
 {
     // 栈 256 字(1KB):任务里会调到 printf 和 MG200 的收发函数,留够余量。

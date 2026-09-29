@@ -3,6 +3,7 @@
 #define MOTOR_BAK_PIN   GPIO_Pin_4   // 接 L9110S 的 BAK 输入
 
 
+// 🔴 L0 生死线代码 —— PB3/PB4 的模式和上电初值直接决定电机脚的默认电平:两脚都停在高阻才不会一上电就自转,若配成开漏或初值拉高,等于上电就给电机下了第一条命令
 // X4  X3负责直接驱动电机，外接引脚
 // BAK FOR负责方向 pb3 pb4
 // 当BAK FOR都为0时，x4 x3高阻态
@@ -23,6 +24,7 @@ void L9110S_Config(void)
 
 
 
+// 🔴 L0 生死线代码 —— 直接驱动 L9110S 的 FOR/BAK:正转、反转、短接刹车、高阻四种组合直接落到电机两端,方向配错就是堵转发热甚至打穿输出对管
 void L9110S_control(L9110S_Mode_t mode)
 {
     switch (mode)
@@ -45,6 +47,7 @@ void L9110S_control(L9110S_Mode_t mode)
     }
 }
 
+// 🟡 L1 架构代码 —— 动作时序:给方向 → 忙等 ms → 强制刹车(到位即刹,防锁舌惯性溜回);忙等期间不让调度器,调用者要保证时基在跑、别在任务里长时间占着它
 void L9110S_move(L9110S_Mode_t mode, uint32_t ms)
 {
     uint32_t start = GetTim10Tick();

@@ -101,6 +101,7 @@ static uint8_t s_prov_tried = 0;
 
 
 /**
+ * 🔴 L0 生死线代码 —— 中断里直接读 DR 清 RXNE,环形缓冲的 head/tail 是 ISR 和任务之间唯一的同步点;满了宁可丢新字节也不盖旧字节,盖一下就会把一整行 AT 应答从中间截断
  * @brief  USART2 接收中断:每来一个字节就塞进环形缓冲
  * @note   用 head==tail 判断空、用 head+1==tail 判断满 ——
  *         永远留一个空位,这样"空"和"满"不会混成同一种状态。
@@ -130,6 +131,7 @@ void USART2_IRQHandler(void)
 // ── 发送 ──
 
 /**
+ * 🟢 L2 工具代码 —— 契约就一条:轮询 TXE 再把字节塞进 DR;115200 下一个字节 87us,最坏几毫秒的忙等且只有优先级最低的 wifi_task 会走这里,不用管实时性
  * @brief  发一个字节(忙等 TXE)
  * @note   115200 下一个字节约 87us,整条 AT 命令也就几毫秒,
  *         而且只被 wifi_task(优先级 1,最低)调用,不会饿死业务任务。
@@ -143,6 +145,7 @@ static void wifi_send_byte(uint8_t b)
 
 
 /**
+ * 🟢 L2 工具代码 —— 逐字节转发 + 补 CRLF,模块只认 "\r\n";唯一容易漏的是结尾要等 TC 而不是 TXE,否则最后一个字节可能在紧接着的操作里被截断
  * @brief  发一条 AT 命令,自动补 "\r\n"
  * @note   模块要求命令必须以 CRLF 结尾,只发 "\n" 不认。
  */
@@ -165,6 +168,7 @@ static void wifi_send_line(const char *s)
 // ── 接收 ──
 
 /**
+ * 🟡 L1 架构代码 —— 缓冲空的时候用 vTaskDelay(1) 让出 CPU 而不是忙等,这是"联网等几百毫秒很正常"换来的设计;同时它也划定了"只能在任务上下文调用"的边界,搬进 ISR 里就是等死
  * @brief  从环形缓冲取一个字节,取不到就等到超时
  * @param  out        输出:取到的字节
  * @param  start      本轮计时的起点,来自 GetTim10Tick()
@@ -192,6 +196,7 @@ static uint8_t wifi_get_byte(uint8_t *out, uint32_t start, uint32_t timeout_ms)
 
 
 /**
+ * 🟡 L1 架构代码 —— 超时是整行共享一个 deadline(不是每字节重新计时),行太长时只保留前段继续吞到行尾、绝不把一行劈成两行喂给上层;这两条策略决定了调用者拿到的行可不可信
  * @brief  取一整行(到 '\n' 为止),顺便去掉行尾的 '\r'
  * @param  line 输出缓冲
  * @param  max  缓冲大小(含 '\0')
@@ -232,6 +237,7 @@ static int wifi_read_line(char *line, uint16_t max, uint32_t timeout_ms)
 
 
 /**
+ * 🟡 L1 架构代码 —— AT 收发的中心:超时从发命令那一刻算总账、用子串而不是 strcmp 匹配 "ERROR" 以兜住模块真回的 "+ERROR"、非 OK/ERROR 的行存进 s_at_prev 供失败分支解读
  * @brief  发一条 AT 命令,逐行收应答,直到 OK / ERROR
  * @param  cmd        命令正文,不含结尾的 CRLF
  * @param  watch      想额外捞出来的关键字,NULL 表示不捞
@@ -313,6 +319,7 @@ static uint8_t wifi_at_ex(const char *cmd, const char *watch,
 
 
 /**
+ * 🟢 L2 工具代码 —— 一行转发,契约只有"回了 OK 就算成";超时怎么算、+ERROR 怎么认、事件行怎么留,坑全在 wifi_at_ex 里,这里改不出花样
  * @brief  wifi_at_ex 的简化版:不关心应答内容,只想知道成没成
  */
 static uint8_t wifi_at_cmd(const char *cmd, uint32_t timeout_ms)
@@ -322,6 +329,7 @@ static uint8_t wifi_at_cmd(const char *cmd, uint32_t timeout_ms)
 
 
 /**
+ * 🟡 L1 架构代码 —— "命令回 OK ≠ 事情办成"这条 AT 模块的通用语义就落在这里:连 MQTT 必须等到 +EVENT:MQTT_CONNECT 才敢走下一步,只等 OK 就去干别的,一连云端必翻车
  * @brief  等模块主动上报某个事件
  * @param  token      关键字,比如 "+EVENT:MQTT_CONNECT"
  * @param  timeout_ms 最多等多久
@@ -362,6 +370,7 @@ static uint8_t wifi_wait_event(const char *token, uint32_t timeout_ms)
 
 
 /**
+ * 🟡 L1 架构代码 —— 只认 status 3(连上且拿到 IP)才算通,1/2 都当没通;这个判据同时决定"要不要重发 WJAP"和"蓝牙配网算不算成功",松一格就会出现"看着连上了其实没网"
  * @brief  问模块"WiFi 现在是通的吗"
  * @return 1 = 已连上且拿到 IP;0 = 没通(或查询本身失败)
  * @note   用 AT+WJAP? 查,回的是:
@@ -396,6 +405,7 @@ static uint8_t wifi_is_wifi_up(void)
 
 
 /**
+ * 🟡 L1 架构代码 —— 每次现算而不是进循环前算一次:探活 + AT+WMODE 本身就要花掉几秒,拿旧值会让这次连接透支掉配网窗口;下界兜到 WIFI_MIN_TRY_MS 是为了不发那种"发出去也没人收"的白命令
  * @brief  算"开机 15 秒配网窗口"里还剩多少毫秒可以拿来连 WiFi
  * @param  boot 开机时刻(GetTim10Tick() 取的)
  * @return 剩余毫秒,最少给 WIFI_MIN_TRY_MS
@@ -416,6 +426,7 @@ static uint32_t wifi_join_budget(uint32_t boot)
 
 
 /**
+ * 🟡 L1 架构代码 —— 发 WJAP 之前先查一次 AT+WJAP?,是因为有些固件在"已连接"状态下重发会报错,那样会把好端端的连接误判成失败,陷入"明明能用却一直重连"的死循环
  * @brief  连 WiFi:已经连着就不动,没连才发 AT+WJAP
  * @param  ssid       WiFi 名(从 EEPROM 读出来的)
  * @param  pwd        密码
@@ -455,6 +466,7 @@ static uint8_t wifi_wifi_join(const char *ssid, const char *pwd, uint32_t timeou
 
 
 /**
+ * 🟡 L1 架构代码 —— 配网成功后唯一一处"把用户发给模块的凭据从它手里抄回来"的地方,不存则下次上电就得重配;字段按逗号切分,所以要提防 SSID/密码里带逗号时切错位
  * @brief  把模块当前连着的这个 WiFi 的名字和密码抄下来,存进 EEPROM
  * @return 1 = 存好了;0 = 没问到 / 内容不对,没存
  * @note   **蓝牙配网成功后必须调这个**,否则用户配的网下次上电就没了 ——
@@ -531,6 +543,7 @@ static uint8_t wifi_ap_creds_save(void)
 
 
 /**
+ * 🟡 L1 架构代码 —— 先查再订是必须的:订阅列表记在模块自己的 flash 里、重连后它还会自己重订,重复订阅回的 199 手册里却写作 "unsubscribe failed",照着码表查会一路查到沟里去
  * @brief  查模块的订阅列表里有没有我们那个话题
  * @return 1 = 在册(状态 2/3);0 = 不在,或查询本身失败
  * @note   **为什么订阅之前一定要先查?**
@@ -575,6 +588,7 @@ static uint8_t wifi_is_subscribed(void)
 
 
 /**
+ * 🟡 L1 架构代码 —— 只认 status 3;这一个判断守着 AT+MQTT "已连接时再执行会强制断开重连"的行为,判错就等于每 10 秒把好端端的连接掐断重建一次,还顺带骚扰 broker
  * @brief  问模块"MQTT 现在是连着的吗"
  * @return 1 = 已连接(status 3);0 = 没连上,或查询失败
  * @note   手册:AT+MQTT? 回 "+MQTT:<status>,<主机>,<端口>,<方式>,<ClientID>,…"
@@ -607,6 +621,7 @@ static uint8_t wifi_is_mqtt_up(void)
 
 
 /**
+ * 🟡 L1 架构代码 —— 重复订阅回的是 199 这种字面意思完全对不上的错误码,所以这里的原则是"先看状态再决定发不发命令";订不上时还把当前列表整个打出来,把"其实已有"和"真订不上"当场分开
  * @brief  确保云端下发的话题在订阅列表里
  * @return 1 = 在册(原本就在,或刚订上);0 = 订不上
  */
@@ -635,6 +650,7 @@ static uint8_t wifi_ensure_subscribed(void)
 
 
 /**
+ * 🟡 L1 架构代码 —— 七条 AT+MQTT= 配置有先后依赖、发完 AT+MQTT 还要再等 +EVENT:MQTT_CONNECT 才算真连上;开头"已连接就整段跳过"是学乖的结果——以前每轮重试都重发,等于自己周期性把连接掐断
  * @brief  配置 MQTT 参数 → 连接 → 订阅
  * @return 1 = 订阅成功;0 = 中途失败
  * @note   手册里这几项是分开设的(AT+MQTT=<key>,<data>),必须一条条发:
@@ -701,6 +717,7 @@ static uint8_t wifi_mqtt_connect(void)
 
 
 /**
+ * 🔴 L0 生死线代码 —— 这是"云端一段字符串"变成"物理开锁动作"的唯一转换点,解析猜错一个字符就是误开锁;所以认不出字段、值不是 0/1、载荷像被截断时都直接丢弃,绝不瞎猜
  * @brief  把云端下发的 JSON 载荷翻译成锁控命令,投给 lock_task
  * @param  payload 形如 {"DoorLock":1} 的文本
  * @note   平台约定(定义在 lock.h):
@@ -760,6 +777,7 @@ static void wifi_handle_downlink(const char *payload)
 
 
 /**
+ * 🟡 L1 架构代码 —— 只能按前两个逗号切分:payload 是 JSON,天生带逗号,无脑 strtok 会把载荷切碎;还要拿平台声明的 len 和实际收到的长度对账,免得被截断的 JSON 解析出一个错的值
  * @brief  处理一行 +EVENT:MQTT_SUB 上报(云端有消息下来了)
  * @param  line 完整一行,形如:
  *              +EVENT:MQTT_SUB,attributes/push,14,{"DoorLock":0}
@@ -842,6 +860,7 @@ static void wifi_handle_sub_event(const char *line)
 
 
 /**
+ * 🟡 L1 架构代码 —— 常驻收发循环的调度策略:有主动上报就先处理事件(别急着发心跳),收到 MQTT_DISCONNECT 立刻返回交给上层,而不是自己硬撑——只重连不重订阅会"连上了却收不到消息"
  * @brief  MQTT 就绪之后的常驻循环:转发上报 + 定时发心跳
  * @note   只有 MQTT 掉线才返回,交给上层重连。
  */
@@ -899,6 +918,7 @@ static void wifi_session(void)
 
 
 /**
+ * 🟡 L1 架构代码 —— 用轮询而不是等 +EVENT,是因为配网期间必须持续发 AT+WCONFIG? 才知道窗口在不在,而串口的行谁先读谁拿走;另外它的返回值只能说"模块的配网任务开没开",判配网成没成必须另查 AT+WJAP?
  * @brief  查模块当前的配网状态(手册 4.1.16 的 AT+WCONFIG?)
  * @return >=0 = 手册里的 status;-1 = 查询失败
  * @note   status 取值:0=配网任务已关闭 1=WiFi配网(esp touch) 2=蓝牙配网(esp BluFi)
@@ -954,6 +974,7 @@ static int wifi_wifi_config_status(void)
 
 
 /**
+ * 🟡 L1 架构代码 —— 配网流程的骨架:先问固件认不认这条命令、模块已经在配网就别再踢它一脚、成功判据落在 AT+WJAP? 的联网结果上而不是模块的任务状态(实测它会一直赖着报 2),收工无论成败都必须显式关掉窗口,否则设备长期开着"谁都能把它配到别的网"的口子
  * @brief  开一次蓝牙配网,阻塞到配网窗口结束
  * @return 1 = 配网后模块确实连上 WiFi 了;0 = 没成(超时 / 模块不支持 / 用户没来)
  * @note   只在"开机 WIFI_PROV_DEADLINE_MS 内没连上 WiFi"时调用,**且只调一次**。
@@ -1132,6 +1153,7 @@ static uint8_t wifi_ble_provision(void)
 
 
 /**
+ * 🟡 L1 架构代码 —— 联网业务的总编排:{探活 → 连 WiFi → 连 MQTT → 常驻收发} 失败就整体重来、永不退出;凭据从 EEPROM 读、"配网只自动做一次"、开机计时用 TIM10 而不是调度器 tick,都是在这一层定的
  * @brief  WiFi + MQTT 任务
  * @note   优先级 1,比所有业务任务都低。联网再慢也不影响开锁。
  * @note   结构:{ [探活] → [连 WiFi] → [连 MQTT] → [常驻收发] } 循环重试,**永不退出**。
@@ -1258,6 +1280,7 @@ static void wifi_task(void *arg)
 
 
 /**
+ * 🔴 L0 生死线代码 —— PA2/PA3 的 AF7 复用号、USART2 挂 APB1(不是 USART1/6 那个 APB2)、NVIC 抢占优先级 3、只开 RXNE 不开 IDLE,四处都得对着手册和原理图核;错一处就是"偶尔丢字节"这种最难查的症状
  * @brief  初始化 USART2:PA2=TX / PA3=RX,AF7
  */
 void wb2_Config(void)
@@ -1309,6 +1332,7 @@ void wb2_Config(void)
 }
 
 
+// 🟡 L1 架构代码 —— 512 字栈是按 wifi_session→wifi_at_ex 的最深调用链再加几个任务共用 fputc 的 printf 开销估出来的(栈溢出不报错、只改坏别人的数据),优先级给 1 是为了联网永远抢不走业务任务的 CPU
 void wifi_tasks_init(void)
 {
     // 栈 512 字(2048 字节)。为什么要这么多? 最深的调用链是

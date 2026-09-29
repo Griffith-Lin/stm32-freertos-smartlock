@@ -16,9 +16,21 @@
 //   '*'      清空已输入的,重新输
 //   '#'      确认,校验密码
 
-#define LOCK_PWD_LEN    6       // 密码位数
-#define LOCK_OPEN_MS    3000    // 开锁后保持多久自动回锁(ms)
-#define LOCK_MOTOR_MS   500     // 开锁/回锁的电机行程时间(ms),按实际锁体调
+#define LOCK_PWD_LEN         6       // 密码位数
+#define LOCK_OPEN_MS         3000    // 开锁后**保持**多久自动回锁(ms),不是电机行程时间
+
+// ── 电机行程时间:开锁和回锁**各给一个**,不要合成一个 ──
+//   为什么必须分开:推锁舌出去和收锁舌回来是两个不同的物理过程 ——
+//   行程长度、弹簧压力、传动阻力都不一样。合成一个值喂给两边,必然
+//   一边偏早(锁舌还没走到底电机就刹车了,锁没真正打开)、
+//   一边偏晚(已经顶到头还在继续转,堵转发热,久了烧线圈)。
+//
+//   怎么调:先把两个值都放大到大得离谱(比如 2000),听电机声音 ——
+//   "哒"一声到位、声音从轻快变沉,那一刻就是真实行程。记下时间再往回收
+//   一点余量(机械会磨损、电池会掉压,别贴着临界值用)。
+//   调完直接听:开锁和回锁听到的到位时刻不一样,就说明这两个宏确实该分开。
+#define LOCK_MOTOR_OPEN_MS   500     // 开锁:推锁舌出去,电机正转多久(ms)
+#define LOCK_MOTOR_CLOSE_MS  200     // 回锁:收锁舌回来,电机反转多久(ms)
 
 // ── 锁控命令(远程来源:MQTT 云端下发)──
 //
@@ -40,6 +52,7 @@ typedef enum
 } lock_cmd_t;
 
 /**
+ * 🟡 L1 架构代码 —— 模块对外的锁控入口,契约是"投递意图而非执行动作"且绝不阻塞:满了丢命令,才保证 wifi_task 不被拖慢
  * @brief  投递一条锁控命令(非阻塞)
  * @param  cmd 命令
  * @return 1 = 已入队;0 = 队列没建好 或 已满,被丢弃(已打印日志)
@@ -51,6 +64,7 @@ typedef enum
 uint8_t lock_post_cmd(lock_cmd_t cmd);
 
 /**
+ * 🟡 L1 架构代码 —— 生命周期约束写在接口上:必须赶在调度器启动前调用(内含 EEPROM 忙等写),之后再调会饿死其他任务;载入后密码只在 RAM 里用
  * @brief  密码锁初始化:从 EEPROM 加载密码(没有就写默认值)+ 画开机界面
  * @return 无
  * @note   **必须在 vTaskStartScheduler() 之前调用**。
@@ -61,6 +75,7 @@ uint8_t lock_post_cmd(lock_cmd_t cmd);
 void lock_init(void);
 
 /**
+ * 🟡 L1 架构代码 —— 创建时机的依赖写在接口上:要等 cy9cm_tasks_init() 建好 cy9cm_key_queue 之后再调,顺序反了任务就没有按键队列可收
  * @brief  创建密码处理任务
  * @return 无
  * @note   在 vTaskStartScheduler() 之前调用。任务阻塞在 cy9cm_key_queue 上,
@@ -69,6 +84,7 @@ void lock_init(void);
 void lock_tasks_init(void);
 
 /**
+ * 🟡 L1 架构代码 —— 本地开锁的唯一入口:返回值语义(1=受理/0=忙被拒)和非阻塞约定,要求密码、指纹、云端三条路共用这一份互斥判断
  * @brief  开锁 —— 本地开锁来源的公共出口(密码、指纹都走这里)
  * @param  title 开锁期间标题行显示的 ASCII 文字
  * @param  color 标题颜色
@@ -90,6 +106,7 @@ void lock_tasks_init(void);
 uint8_t lock_open(uint8_t *title, uint16_t color);
 
 /**
+ * 🟢 L2 工具代码 —— 跨模块显示接口,契约只有一条:传入至少 8 个字符,否则字符格子盖不满会留下上一行标题的残影
  * @brief  只改标题行,不动锁(给指纹那种模块显示"没匹配上"之类的提示用)
  * @param  title ASCII 文字,**至少 8 个字符**
  * @param  color 颜色
@@ -101,6 +118,7 @@ uint8_t lock_open(uint8_t *title, uint16_t color);
 void lock_lcd_set_title(uint8_t *title, uint16_t color);
 
 /**
+ * 🟢 L2 工具代码 —— 只读的状态快照,给别的开锁来源做预检;返回 0 只代表"没在忙",最终是否受理仍要看 lock_open 的返回值
  * @brief  是否正在开锁/回锁
  * @return 1 = 正在进行
  * @note   给别的开锁来源做"预检",省得白采一次指纹再被 lock_open() 拒掉。

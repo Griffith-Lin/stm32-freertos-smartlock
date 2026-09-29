@@ -1,6 +1,90 @@
 #include "lcd.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
+
+// ══════════════════════════════════════════════════════════════════════════
+//  LCD 互斥量 —— 这块屏被 3 个任务(lock / finger / wifi)同时画,而
+//  "地址窗口"是**控制器里的共享状态**,不是函数里的局部变量。
+//
+//  【为什么非加锁不可,这不是洁癖】
+//      LCD_Set_Region() 先发 0x2B/0x2A 把窗口框好、发 0x2C 允许写入,
+//      之后每一个 LCD_Send_16bit() 都落到那个窗口里。
+//      "设窗口"和"写数据"这两步之间如果被切走,另一个任务重设了窗口,
+//      回来接着写的数据就落到**别人的地盘**上 —— 屏上就是随机亮点(花屏)。
+//      而 lock 和 finger 的优先级都是 2,会时间片轮转,所以这种切换
+//      **每个 SysTick(1ms)都可能发生**,不是小概率事件。
+//
+//  【锁加在哪一层,这是读本文件时最容易搞错的地方】
+//      本文件里所有画线/画圆/写字,最后都收敛到 LCD_Set_Point() 逐个像素画;
+//      而 LCD_Set_Point() **每个像素都重新设一次窗口**。
+//      所以事务边界是"一个像素",不是"一个字符"——
+//      只要锁住下面这 4 个**自己设窗口**的函数,上面一整层绘图 API
+//      (LCD_Font_Dis / LCD_DrawLine / LCD_printf_font ...)自动就是原子的,
+//      调用方一行都不用改:
+//          LCD_Set_Point      像素
+//          LCD_Clear          整屏
+//          LCD_Dis_Pic        图片
+//          LCD_FillRectangle  矩形
+//      (其余函数都只是这四个的下游:LCD_Font_Dis_Ascii 等走 Set_Point,
+//       LCD_FillCircle 走 DrawLine。)
+//
+//  【为什么用递归互斥量】
+//      上面 4 个函数互不调用,普通互斥量理论上就够。但 lock.c 的
+//      lock_lcd_text() 想一次性锁住"整串字"(否则可能出现标题半串是
+//      PASSWORD、半串是 FINGER 的画面),而它内部会走到 LCD_Set_Point()——
+//      同一个任务二次取锁。普通互斥量在这里会把自己锁死(死锁),
+//      递归互斥量允许同一任务重复取。configUSE_RECURSIVE_MUTEXES 本来就是 1,
+//      不多花一分钱,所以直接用递归版,免掉将来踩这个坑。
+// ══════════════════════════════════════════════════════════════════════════
+
+static SemaphoreHandle_t s_lcd_mtx = NULL;   // 生命周期 = 整个程序,在 LCD_Init() 里创建
+
+/**
+ * 🔴 L0 生死线代码 —— 调度器没跑时必须直接返回:xSemaphoreTakeRecursive 拿不到锁时会去操作 pxCurrentTCB,而裸机阶段它还是 NULL,会直接 HardFault
+ * @brief  取 LCD 互斥量(递归,同一任务可重复取)
+ * @param  无
+ * @return 无(取不到就一直等,见下方注意事项)
+ * @note   调度器启动**之前**是空操作,这是必须的:LCD_Init() 里的清屏、开机界面、
+ *         MG200 录入指纹的提示,全都跑在 vTaskStartScheduler() 之前。那段时期
+ *         只有主线程在碰 LCD,不存在竞争,跳过锁是安全的。
+ *         ⚠ 别改成"判断 s_lcd_mtx 是否为 NULL":LCD_Init() 里锁就建好了,
+ *           句柄非空,可那时离调度器启动还差着十万八千里,一样会踩空。
+ *         ⚠ 判据要用 NOT_STARTED,不能写 "!= taskSCHEDULER_RUNNING":
+ *           后者在调度器被 vTaskSuspendAll() 挂起时会漏放锁(取锁时是 RUNNING
+ *           所以真取了,放锁时变成 SUSPENDED 就跳过不放),锁再也回不来。
+ *           NOT_STARTED 是单向的(一旦启动就不会退回),取放两侧天然对称。
+ * @note   用 portMAX_DELAY 死等而不是超时返回:超时了还得硬画,那锁就白加了。
+ *         真正的保护来自互斥量的**优先级继承**——低优先级任务占着锁不放时,
+ *         会被临时提到等待者的优先级,不会出现无界优先级反转。
+ */
+void LCD_Lock(void)
+{
+    if (xTaskGetSchedulerState() == taskSCHEDULER_NOT_STARTED)
+    {
+        return;
+    }
+    xSemaphoreTakeRecursive(s_lcd_mtx, portMAX_DELAY);
+}
+
+/**
+ * 🔴 L0 生死线代码 —— 必须和 LCD_Lock() 严格成对;中途 return 忘了放锁,整个屏永久卡死(lock/finger/wifi 三个任务一起阻塞在取锁上)
+ * @brief  释放 LCD 互斥量
+ * @param  无
+ * @return 无
+ * @note   跳过条件与 LCD_Lock() 完全一致(见上面的说明),两侧必须对称。
+ */
+void LCD_Unlock(void)
+{
+    if (xTaskGetSchedulerState() == taskSCHEDULER_NOT_STARTED)
+    {
+        return;
+    }
+    xSemaphoreGiveRecursive(s_lcd_mtx);
+}
 
 /*******************
+ * 🔴 L0 生死线代码 —— 六个引脚全在 GPIOB:时钟没开或模式写错屏根本不亮;复位脉冲(拉低 50ms → 拉高 → 再等 120ms)是全片唯一一次给 ST7789 定初始状态的地方,脉宽不够芯片内部状态就是随机的
  * 函数功能：LCD管脚初始化
  * 形参：无
  * 返回值：无
@@ -39,6 +123,7 @@ void LCD_Pin_Config(void)
 }
 
 /*
+🔴 L0 生死线代码 —— 用 GPIO 逐位模拟 SPI:数据从 MSB 开始摆到 MOSI、靠 SCK 跳变采样,循环少走一拍或把 SCK 拉高拉低的先后写反,整屏命令和像素就会整体错位一位,而屏不会报任何错
 Function name:Spi_Send_byte
 Description:SPI的模拟代码
 param:data---待发送的数据
@@ -64,6 +149,7 @@ void Spi_Send_byte(uint8_t data)
 }
 
 /*
+🔴 L0 生死线代码 —— DC=0 才走命令通道:DC 和 CS 这两个电平的组合决定本字节被 ST7789 当命令还是当数据,写反了整串初始化命令会被当成像素数据吃掉,现象是花屏
 Function name:LCD_Send_Cmd
 Description:SPI发送命令
 param:cmd---待发送的命令
@@ -79,6 +165,7 @@ void LCD_Send_Cmd(uint8_t cmd)
 }
 
 /*
+🔴 L0 生死线代码 —— 和 LCD_Send_Cmd 只差 DC 一位,却是"命令参数"和"像素数据"两条完全不同的通路;初始化时参数多发或少发一个,后面所有命令会连锁错位且不报错
 Function name:LCD_Send_Data
 Description:SPI发送数据
 param:data---待发送的数据
@@ -94,6 +181,7 @@ void LCD_Send_Data(uint8_t data)
 }
 
 /*
+🔴 L0 生死线代码 —— ST7789 的坐标和 RGB565 颜色都要求高字节先发:高低写反时颜色是 565 两个字节互换(整片偏色),坐标则落进错误的窗口位置,全程无任何报错
 Function name:LCD_Send_16bit
 Description:SPI发送16bit数据
 param:data---待发送的数据
@@ -110,6 +198,7 @@ void LCD_Send_16bit(uint16_t data)
 }
 
 /*
+🟡 L1 架构代码 —— 0x2B 行、0x2A 列、0x2C 开写这三条的顺序和"结束坐标要减 1"(ST7789 地址窗口是闭区间)是全文件共用的坐标约定;这里错一点,上层二十多个画图函数一起错位
 Function name:LCD_Set_Region
 Description:设置写入的区域
 param:row_s,row_e--起始/终止行  col_s,col_e--起始/终止列
@@ -130,6 +219,7 @@ void LCD_Set_Region(uint16_t row_s, uint16_t row_e, uint16_t col_s, uint16_t col
 }
 
 /*
+🟢 L2 工具代码 —— 开一块大窗口后连续推同一个颜色;刷的个数按行×列算(循环用 <= 还会多送一个像素,只多在最边上一点),对不对肉眼一看就知道,不含任何时序
 Function name:LCD_Clear
 Description:清屏函数
 param:row_s,row_e--起始/终止行  col_s,col_e--起始/终止列  color--清屏颜色
@@ -139,6 +229,8 @@ Remarks:
 void LCD_Clear(uint16_t row_s, uint16_t row_e, uint16_t col_s, uint16_t col_e, uint16_t color)
 {
 	u32 i, j;
+
+	LCD_Lock();
 	LCD_Set_Region(row_s, row_e, col_s, col_e);
 	//	for(i=row_s;i<=row_e;i++)//行
 	//	{
@@ -151,11 +243,23 @@ void LCD_Clear(uint16_t row_s, uint16_t row_e, uint16_t col_s, uint16_t col_e, u
 	{
 		LCD_Send_16bit(color);
 	}
+
+	LCD_Unlock();
 }
 
+// 🔴 L0 生死线代码 —— 一整串厂商定死的 ST7789 上电命令:0x3A 定 RGB565、0xB2/0xC0 是电源与时序参数、0xE0/0xE1 是 Gamma 曲线,任何一条的参数个数错一个,后面全部命令跟着错位,现象是白屏/花屏且无处报错
 // 初始化函数
 void LCD_Init(void)
 {
+	// ① 先把互斥量建出来,必须排在**任何画屏动作之前**
+	//    在 vTaskStartScheduler() 之前创建内核对象是允许的:FreeRTOS 内部走
+	//    pvPortMalloc,不依赖调度器。建好之后 s_lcd_mtx 非空,但 LCD_Lock()
+	//    仍会因为"调度器没跑"而跳过 —— 这两件事互不矛盾,别觉得多此一举。
+	if (s_lcd_mtx == NULL)
+	{
+		s_lcd_mtx = xSemaphoreCreateRecursiveMutex();
+	}
+
 	LCD_Pin_Config();
 	//	LCD_Set_Brightness(84,1000);//屏幕亮度调节
 	/* 复位ST7789VM驱动器 */
@@ -246,6 +350,7 @@ void LCD_Init(void)
 	//	TIM_SetCompare4(TIM3,1000);//PWM1 CNT<CCR有效 有效为高 CCR越大屏幕越亮
 }
 
+// 🟢 L2 工具代码 —— 把现成的字模数组按位展开成像素;字模从哪来、按什么顺序存全由调用方保证,画出来像不像那个字一眼可辨
 // 打印字模
 void LCD_printf_font(uint16_t row, uint16_t col, uint8_t font_size, const uint16_t *data, uint16_t font_color, uint16_t back_color)
 {
@@ -273,6 +378,7 @@ void LCD_printf_font(uint16_t row, uint16_t col, uint8_t font_size, const uint16
 }
 
 /*
+🟡 L1 架构代码 —— 画图层和面板层之间唯一的入口:一个像素 = 窗口 [row,row+1)×[col,col+1),row 竖直、col 水平这套坐标约定在这里定死、上层所有画图函数都继承它;每点重开一次窗口是"能任意跳坐标"换来的代价
 Function name:LCD_Set_Point
 Description:打点函数
 param:row,col--点的位置  color--颜色
@@ -282,10 +388,13 @@ Remarks:
 
 void LCD_Set_Point(uint16_t row, uint16_t col, uint16_t color)
 {
+	LCD_Lock();
 	LCD_Set_Region(row, row + 1, col, col + 1); // 一个像素 = [row,row+1) × [col,col+1)
 	LCD_Send_16bit(color);
+	LCD_Unlock();
 }
 
+// 🟢 L2 工具代码 —— 从图片数组头部读宽高、再按大端逐像素推给面板;数组布局(8 字节头 + RGB565)对不上就是满屏乱码,属于一看就知的黑盒输出
 // 图片显示函数
 /*
 数据头如下
@@ -305,14 +414,17 @@ void LCD_Dis_Pic(uint16_t row, uint16_t col, const uint8_t *pic)
 	uint16_t w, h;
 	w = pic[2] << 8 | pic[3];
 	h = pic[4] << 8 | pic[5];
+	LCD_Lock();
 	LCD_Set_Region(row, row + h, col, col + w);
 	for (i = 0; i <= h * w - 1; i++)
 	{
 		LCD_Send_16bit(pic[8 + 2 * i] << 8 | pic[9 + 2 * i]);
 	}
+	LCD_Unlock();
 }
 
 /*
+🟢 L2 工具代码 —— 按字号选 16/24/32 号字库在 W25Q 里的起始地址(0x00000000/0x0004064C/0x000D1A68)再按 ASCII 码算字模偏移;这张偏移表是和烧进 flash 的字库文件共享的约定,算错只显示成别的字、一眼可查
 Function name:LCD_Font_Dis_Ascii
 Description:字符显示函数---字库支持
 param:row,col--左上角坐标  font_size--字体大小  font_color--字体颜色  back_color--背景颜色  asc--想要显示的字符
@@ -368,6 +480,7 @@ void LCD_Font_Dis_Ascii(uint16_t row, uint16_t col, uint8_t font_size, uint16_t 
 }
 
 /*
+🟢 L2 工具代码 —— 汉字要先由 GB2312 区位码((高位-0xA1)*94+(低位-0xA1))算出字模偏移再逐位画点;索引公式错了顶多显示成另一个字,不碰任何硬件状态
 Function name:LCD_Font_Dis_Font
 Description:汉字显示函数---需要字库支持
 param:row,col--左上角坐标  font_size--字体大小  font_color--字体颜色  back_color--背景颜色  font--需要显示的汉字
@@ -415,6 +528,7 @@ void LCD_Font_Dis_Font(uint16_t row, uint16_t col, uint8_t font_size, uint16_t f
 	}
 }
 
+// 🟢 L2 工具代码 —— 逐字节扫字符串:小于 0xA1 当半角字符、否则吞两个字节当汉字;判据来自 GB2312 的编码区间,分错只是显示乱码,不改任何硬件状态
 //中英文可混写
 void LCD_Font_Dis(uint16_t row, uint16_t col, uint8_t font_size, uint16_t font_color, uint16_t back_color, uint8_t *font)
 {
@@ -452,6 +566,7 @@ void LCD_Font_Dis(uint16_t row, uint16_t col, uint8_t font_size, uint16_t font_c
 
 
 /*
+🟢 L2 工具代码 —— 同一套中英文混排,判据换成 >0xA0 认汉字、列坐标按入参推进;换行逻辑被注释掉了,超宽就直接画到屏幕外,纯显示问题
 Function name:LCD_Dis_Str_Roll
 Description:字符串显示函数---支持滚屏显示的
 param:row,col--左上角坐标  font_size--字体大小  font_color--字体颜色  back_color--背景颜色  str--需要显示的字符串首地址
@@ -495,6 +610,7 @@ void LCD_Dis_Str_Roll(u16 row,u16 col,u8 font_size,u16 font_color,u16 back_color
 
 
 /*
+🟡 L1 架构代码 —— while(1)+Delay_Ms(NOP 忙等)的"前台滚动",函数永远不返回:只能在裸机上或专门给它一个独占任务时用,放进普通 FreeRTOS 任务会按优先级把其它任务全部饿死——这是使用场景层面的决策
 Function name:LCD_Roll_Dis
 Description:滚动显示---需要字库支持
 param:row--行  font_size--字体大小  font_color--字体颜色  back_color--背景颜色  str--需要显示的字符串首地址 speed--速度
@@ -539,6 +655,7 @@ void LCD_Roll_Dis(u16 row,u8 font_size,u16 font_color,u16 back_color,u8 *str,u8 
 /* ==================== 画图函数(参考正点原子 lcd.c) ==================== */
 
 /*
+🟢 L2 工具代码 —— Bresenham 整数误差累积画线,给起点终点就出线;算错最多是线歪或锯齿,纯几何输出,肉眼可验
 Function name: LCD_DrawLine
 Description: 画直线,Bresenham算法,整数运算无浮点
 param:row1,col1--起点  row2,col2--终点  color--颜色
@@ -598,6 +715,7 @@ void LCD_DrawLine(uint16_t row1, uint16_t col1, uint16_t row2, uint16_t col2, ui
 }
 
 /*
+🟢 L2 工具代码 —— 中点画圆只算 1/8 圆,靠 8 对称点补齐其余部分;判别式算错圆会歪或开口,属于纯几何问题
 Function name: LCD_DrawCircle
 Description: 画圆,中点画圆法,利用8对称性
 param:row,col--圆心  r--半径  color--颜色
@@ -631,6 +749,7 @@ void LCD_DrawCircle(uint16_t row, uint16_t col, uint16_t r, uint16_t color)
 }
 
 /*
+🟢 L2 工具代码 —— 四条边就是四次 LCD_DrawLine,坐标传反只会画出畸形边框,没有隐藏契约
 Function name: LCD_DrawRectangle
 Description: 画矩形(边框),四条边各画一条线
 */
@@ -643,6 +762,7 @@ void LCD_DrawRectangle(uint16_t row1, uint16_t col1, uint16_t row2, uint16_t col
 }
 
 /*
+🟢 L2 工具代码 —— 三条边 = 三次 LCD_DrawLine,纯组合,画错了看得见
 Function name: LCD_DrawTriangle
 Description: 画三角形(边框),三条边
 */
@@ -654,18 +774,23 @@ void LCD_DrawTriangle(uint16_t row1, uint16_t col1, uint16_t row2, uint16_t col2
 }
 
 /*
+🟢 L2 工具代码 —— 和 LCD_Clear 同一套路:一次开窗口后批量推色,比逐点快得多;上界写法不同(Clear 多刷一个像素),差一个也只是最边上多或少一个点
 Function name: LCD_FillRectangle
 Description: 填充矩形,一次设置窗口批量刷,比逐点快得多
 */
 void LCD_FillRectangle(uint16_t row1, uint16_t col1, uint16_t row2, uint16_t col2, uint16_t color)
 {
 	u32 i;
+
+	LCD_Lock();
 	LCD_Set_Region(row1, row2, col1, col2); /* 与 LCD_Clear 相同语义 */
 	for (i = 0; i < (u32)(row2 - row1) * (col2 - col1); i++)
 		LCD_Send_16bit(color);
+	LCD_Unlock();
 }
 
 /*
+🟢 L2 工具代码 —— 每轮用 4 条水平弦把圆补满,弦的端点来自和画圆相同的对称公式;填多填少都在屏幕上看得见
 Function name: LCD_FillCircle
 Description: 填充圆,逐行画水平弦(整数运算,无sqrt)
 */
@@ -694,6 +819,7 @@ void LCD_FillCircle(uint16_t row, uint16_t col, uint16_t r, uint16_t color)
 }
 
 /*
+🟢 L2 工具代码 —— 扫描线填充:逐行求三角形各边与本行的交点取左右边界,半开区间判跨只是避免顶点被重复计入;错了最多是像素多寡,纯几何
 Function name: LCD_FillTriangle
 Description: 填充三角形,扫描线法:逐行求与三条边的交点,取左右边界填充
 */

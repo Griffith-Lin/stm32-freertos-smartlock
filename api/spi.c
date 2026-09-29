@@ -4,6 +4,7 @@
 /*---------spi通信（硬件实现）----------*/
 
 
+// 🟡 L1 架构代码 —— 选 Mode0(CPOL=0/CPHA=1Edge)+2 分频去配 W25Q,PA5/6/7 复用成 SPI1、CS 切成输出前先写 ODR=1;这些是硬件"设计选择",选错表现为 W25Q 不响应而不是烧硬件
 void spi1_w25_Config(void)
 {
     
@@ -56,6 +57,7 @@ void spi1_w25_Config(void)
 
 
 
+// 🔴 L0 生死线代码 —— 直接轮询 SPI1 的 TXE/RXNE 状态位、收发共用同一个 DR;标志语义看错就静默错位(超时到期后照样把数据写进去),W25Q 的每个字节都不可信
 //SPI数据收发一体函数 先发后收
 uint8_t SPI_Echo(uint8_t data)
 {
@@ -71,6 +73,7 @@ uint8_t SPI_Echo(uint8_t data)
 
 
 
+// 🟡 L1 架构代码 —— SPI1 主模式的另一套参数(CPOL=0/CPHA=1Edge、8 位、MSB 先发)复用给 SD 卡,分频/复用脚是配置选择;错的表现是卡不响应,要把卡侧模式要求搞清楚
 //pa4 sd_cs   pa5 spi1_sck   pa6 spi1_miso   pa7 spi1_mosi   
 //sp0
 void spi1_sd_Init(void)
@@ -111,6 +114,7 @@ void spi1_sd_Init(void)
 
 
 /*-----------spi通信（软件模拟）------------*/
+// 🔴 L0 生死线代码 —— 用魔法掩码直接改 GPIOA/GPIOB 的 MODER/OTYPER/OSPEEDR/PUPDR,没有标准库兜底,掩码哪一位算错就把整组相邻引脚一起改掉
 //pb14片选
 //pa5
 void spi_simulation_ini(void)
@@ -146,6 +150,7 @@ void spi_simulation_ini(void)
 
 
 
+// 🔴 L0 生死线代码 —— 用位带宏手翻 SCK/MOSI 模拟 SPI,在上升沿采 MISO 拼字节;位序(0x80>>i)或边沿搞反一位,整条数据流就永久错位且没有超时兜底
 /*
 物理层:
 同时收发（全双工）
@@ -190,6 +195,7 @@ uint8_t SPI_simulation_Echo(uint8_t data)
 
 
 
+// 🟢 L2 工具代码 —— 循环体被整段注释掉,现在调用它等于什么都没发生,只是个未完成的接口占位;黑盒验证也只能确认"没有副作用"
 //1.先发送高位 发送八位数据
 void send_data(uint8_t data)
 {

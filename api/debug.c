@@ -1,5 +1,6 @@
 #include "debug.h"
 
+// 🟢 L2 工具代码 —— 调试桩:读回 W25Q 里字库的前 BUFFSIZE 字节打出来看格式对不对,唯一判据就是这串十六进制
 void font_test(void)
 {
     // 下载字库
@@ -26,6 +27,7 @@ void font_test(void)
     */
 }
 
+// 🟢 L2 工具代码 —— 故意递归 n 层把栈耗光的测试桩(buf 那行是为了不让编译器把它优化成尾调用);只在排查栈溢出时用,别在业务里调
 void die(uint16_t n)
 {
     char buf[100];
@@ -34,6 +36,7 @@ void die(uint16_t n)
         die(n - 1); // 喊 n 次就一层层回头
 }
 
+// 🟢 L2 工具代码 —— 手动走一遍"录一枚指纹 + 一直比对"的测试桩,验证 MG200 链路用;结尾 while(1) 永不返回,和业务任务无关
 void add_finger(void)
 {
     mg200_add_finger();
@@ -47,6 +50,7 @@ void add_finger(void)
 #define FONT_DUMP_LEN 0x1D3800u /* 略大于 font_all.bin(0x1D3374),够覆盖整片字库 */
 
 /**
+ * 🟢 L2 工具代码 —— 回读字库与源文件对拍用的:PC 端认住 ASCII 同步头再数够 FONT_DUMP_LEN 字节就行,唯一要验的是 TXE 轮询别漏;绕开 printf 直接写 DR 只为省格式化开销
  * @brief  把 W25Q 里的字库原样吐到 USART1,PC 端存盘后与源文件逐字节对比
  * @param  无
  * @return 无
@@ -75,6 +79,7 @@ void font_dump(void)
     printf("\r\n===DUMP END===\r\n");
 }
 
+// 🟢 L2 工具代码 —— 循环发 0x00/0x01/0x02 三条语音、间隔 2 秒留耳朵分辨,是"模块到底响不响"的最小验证桩
 void nv400f_test(void)
 {
     static const u8 voice_test_addr[3] = {0x00, 0x01, 0x02};

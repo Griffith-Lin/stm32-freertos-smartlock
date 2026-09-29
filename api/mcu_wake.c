@@ -3,6 +3,7 @@
 //mcu_wkup PA0,空闲状态下输入的是低电平
 //配置为上拉输入模式
 /**
+ * 🔴 L0 生死线代码 —— STANDBY 模式下 PA0 是唯一的唤醒源,这个脚配错就只能靠断电复位
  * @brief 待机唤醒模块初始化:开 PWR 时钟 + 配 PA0
  * @return 无
  * @note PWR_GetFlagStatus/PWR_ClearFlag 等都要先开 PWR 时钟(APB1),须最先调用
@@ -24,6 +25,7 @@ void mcu_wkup_Config(void)
 }
 
 /**
+ * 🔴 L0 生死线代码 —— 判断本次是唤醒还是冷启动的唯一证据就是 WUF:只读不清,下次上电会被误判成待机唤醒;清的位置早于判断又永远读不到“被唤醒过”这个事实
  * @brief 检测本次复位是否来自 PA0 待机唤醒
  * @return 1 = 待机唤醒复位;0 = 冷启动/普通复位
  * @note 在 mcu_wkup_Config() 之后尽早调用;内部会清掉 WUF 标志
@@ -36,6 +38,7 @@ uint8_t mcu_was_standby_wake(void)
 }
 
 /**
+ * 🔴 L0 生死线代码 —— 进 STANDBY 前 EWUP=1、清 WUF、等 TC 发完这几步少做一步,芯片就可能真的一睡不醒,只能靠断电救;WFI 之后没有第二次机会,必须逐行对着手册核
  * @brief 进入 STANDBY 模式(长按 PC13 业务调用)
  * @return 无(正常情况永不返回)
  * @note 唤醒方式:PA0 上升沿(WKUP 脚) → 整片复位,代码从头执行。

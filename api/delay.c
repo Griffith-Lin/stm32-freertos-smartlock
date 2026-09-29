@@ -3,6 +3,7 @@
 #include "delay.h"
 
 
+// 🟢 L2 工具代码 —— 空转 num/4 次 __NOP,只提供"大约等一会儿"的契约;除以 4 是按每轮约 4 周期估的经验值,对不对只能量波形,看代码看不出来
 void Delay_nop(u32 num)
 {
     num/=4;
@@ -30,6 +31,7 @@ loop:
 
 */
 
+// 🟢 L2 工具代码 —— 每微秒 84 条 __NOP 是照 84MHz 手工标定的常数,验证方式就是量波形;但软件 I2C 的节拍全靠它,换主频/优化等级后这层契约会默默失效
 void Delay_Us(u32 ustime)
 {
 	while(ustime--)
@@ -47,6 +49,7 @@ void Delay_Us(u32 ustime)
 }
 
 
+// 🟢 L2 工具代码 —— 只是把毫秒拆成 1000 次 Delay_Us 的简单循环,精度完全继承微秒级实现,自己没有任何额外逻辑
 void Delay_Ms(u32 mstime)
 {
 	while(mstime--)

@@ -3,7 +3,11 @@
 // 从 main.c 搬迁时保持优先级、栈大小、周期一一对应,行为不变。
 
 #include "learn.h"
-#include "main.h"
+// 这里原来是一行 #include "main.h",而当时的 main.h 拖着 20 个外设头文件。
+// 本文件实际只用到两样东西,现在直接列出来:
+#include "lcd.h"      // LCD_Clear —— 演示3 的刷屏测试
+#include "led.h"      // LED_RED_toggle —— 演示1 的任务节奏可视化
+#include "stdio.h"    // printf
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
@@ -12,6 +16,7 @@
 // 多个任务同时 printf 会逐字符交错。print_mutex 保证"一整行"原子输出
 static SemaphoreHandle_t print_mutex; // 打印互斥锁(xSemaphoreCreateMutex 带优先级继承)
 
+// 🟡 L1 架构代码 —— 用 print_mutex 把"一整行 printf"包成原子段;去掉它,高优先级任务会在字符中间插进来把两行打印搅在一起(演示2 的对照组)
 static void print_line(const char *s)
 {
     xSemaphoreTake(print_mutex, portMAX_DELAY); // 获取打印互斥锁；锁被占用时任务进入阻塞态，直到锁可用。第二个参数是最大阻塞时间，参数portMAX_DELAY 通常表示无限等待，但严格来说取决于 FreeRTOSConfig.h 中的 INCLUDE_vTaskSuspend 配置；启用时才是真正意义上的无限等待。
@@ -20,6 +25,7 @@ static void print_line(const char *s)
 }
 
 // ==================== 演示1:任务骨架/栈溢出实验位 ====================
+// 🟢 L2 工具代码 —— 只剩 vTaskDelay(500) 空转的骨架(原来 die(5) 的栈溢出实验被注释掉了),唯一要验的就是"任务确实周期性让出了 CPU"
 static void led_task(void *arg)
 {
 
@@ -34,6 +40,7 @@ static void led_task(void *arg)
 // 实验方法:把下面两行 print_line 换回 printf,print_task1 把 vTaskDelay 注释掉(满速洪水),
 //           观察高优先级 task2 每次醒来如何把 task1 的行拦腰截断(见 task2 注释里的样例);
 //           换回 print_line 后整行完整 —— 互斥量的作用。
+// 🟢 L2 工具代码 —— 打印和延时都被注释,现在是空转桩;意义只在实验说明里:与 print_task2 对照演示"不用互斥量时两行打印会被截断"
 static void print_task1(void *arg)
 {
 
@@ -45,6 +52,7 @@ static void print_task1(void *arg)
     }
 }
 
+// 🟡 L1 架构代码 —— 用 vTaskDelayUntil 锚定"上次+500ms"演示不漂移的周期任务写法(与 task1 对照),优先级 4 是为了打印过程不被高优先级插队
 // 做"每 500ms 精确一次"的闪烁，对比vTaskDelay的漂移
 static void print_task2(void *arg)
 {
@@ -69,6 +77,7 @@ static void print_task2(void *arg)
 
 // ==================== 演示3:LCD 刷屏测试 ====================
 /**
+ * 🟢 L2 工具代码 —— 每 500ms 白/黑全屏交替,纯 LCD 驱动的显示验证桩,刷对了就通过
  * @brief LCD 刷屏测试任务
  * @param arg 任务参数(未使用)
  * @return 无
@@ -78,9 +87,16 @@ static void lcd_task(void *arg)
 {
    for (;;)
     {
-        LCD_Clear(0, 240, 0, 320, WHITE);
+        // 参数顺序是 (row_s, row_e, col_s, col_e) —— 屏是 320 行 × 240 列。
+        // 这里原来写的是 LCD_Clear(0, 240, 0, 320, ...),行列**写反了**:
+        //   设出来的窗口是"行 0~239、列 0~319",而屏只有 240 列,
+        //   多出来的列越界;真正的 240~319 行反而永远清不掉,
+        //   现象就是刷屏测试底下那一条始终不变。
+        // 对照 lcd.c 的 LCD_Init():LCD_Clear(0, 320, 0, 240, WHITE)
+        //   注释写着"行0~319,列0~239",以及 lock.c 里的同一句。
+        LCD_Clear(0, 320, 0, 240, WHITE);
         vTaskDelay(500);
-        LCD_Clear(0, 240, 0, 320, BLACK);
+        LCD_Clear(0, 320, 0, 240, BLACK);
         vTaskDelay(500);
     }
 }
@@ -93,6 +109,7 @@ static void lcd_task(void *arg)
 //           计数信号量存在的意义就是"事件攒得住,闲了再处理"。
 static SemaphoreHandle_t sem_events; // 计数信号量句柄(上限8、初始0)
 
+// 🟡 L1 架构代码 —— 计数信号量演示的生产端:一口气 Give 3 次模拟事件成批到达,优先级 3 高于消费端才能看见计数爬坡而不是被逐个吃掉
 static void sem_prod_task(void *arg) // 生产端:优先级 3(比消费端高,3次Give一口气打完,不被插队)
 {
     int i;
@@ -110,6 +127,7 @@ static void sem_prod_task(void *arg) // 生产端:优先级 3(比消费端高,3�
     }
 }
 
+// 🟡 L1 架构代码 —— 生产端的对照半场:故意 300ms 才 Take 一次,演示"计数攒得住、闲了再泄洪",和上限 1 的二值信号量形成对照
 static void sem_cons_task(void *arg) // 消费端:优先级 2(故意低于生产端 → 计数才爬得上去)
 {
     char buf[24];
@@ -141,6 +159,7 @@ TCB（任务控制块，内核用 struct tskTaskControlBlock 管理这个任务�
 */
 
 /**
+ * 🟡 L1 架构代码 —— 学习任务总编排:互斥量/计数信号量句柄和 6 个任务的优先级、栈额度全在这里定死,注释掉某行就是裁剪对应演示
  * @brief 创建所有学习演示任务(与业务无关)
  * @return 无
  * @note 在 vTaskStartScheduler() 之前调用;不想跑的演示注释对应行即可

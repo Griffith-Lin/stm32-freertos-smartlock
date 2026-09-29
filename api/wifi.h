@@ -19,6 +19,7 @@
 #define WIFI_UART_BAUD      115200      // WB2 默认波特率
 
 /**
+ * 🔴 L0 生死线代码 —— 里子全在 wifi.c 的同名函数:PA2/PA3 的 AF7 复用号、USART2 挂 APB1、NVIC 抢占优先级 3、只开 RXNE,四处都得对着手册和原理图核;而且必须赶在 vTaskStartScheduler() 之前调完
  * @brief  初始化 USART2(PA2/PA3)—— 只配硬件,不发命令
  * @return 无
  * @note   **必须在 vTaskStartScheduler() 之前调用**。
@@ -28,6 +29,7 @@
 void wb2_Config(void);
 
 /**
+ * 🟡 L1 架构代码 —— 要拿捏的只有两件事:优先级 1(低于所有业务任务,联网再慢也抢不走开锁的 CPU)和 512 字栈(按最深调用链 + printf 开销估的,给少了就是静默的栈溢出)
  * @brief  创建 WiFi/MQTT 任务
  * @return 无
  * @note   在 vTaskStartScheduler() 之前调用。

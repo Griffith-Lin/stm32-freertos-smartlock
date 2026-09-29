@@ -16,10 +16,18 @@
 #define INCLUDE_vTaskDelete           1   /* 启用 vTaskDelete() 删除任务 API */
 #define INCLUDE_uxTaskPriorityGet     1   /* 启用 uxTaskPriorityGet() 查询任务优先级 API */
 #define INCLUDE_xTaskDelayUntil       1   /* 启用 xTaskDelayUntil() 固定周期延时 API */
+#define INCLUDE_xTaskGetSchedulerState 1  /* 启用 xTaskGetSchedulerState()：查询"调度器跑起来没有" */
+    /* 为什么 LCD 互斥量非开这个不可：lcd.c 的画屏函数在**调度器启动之前**就要用
+       （main 里的 LCD_Init、开机画面、MG200 录入提示，全都还在裸机阶段）。
+       xSemaphoreTake 一旦走进"拿不到锁就阻塞"的分支，会去操作 pxCurrentTCB，
+       而那时内核连第一个任务都还没创建，pxCurrentTCB 是 NULL → 直接 HardFault。
+       所以取锁前必须先问一句"调度器在跑吗"，没跑就跳过锁——裸机阶段本来就只有
+       主线程在碰 LCD，不存在竞争，跳过是安全的。
+       ⚠ 只判断互斥量句柄是否为 NULL 是不够的：LCD_Init 里就把锁建好了，句柄非空，
+         但那时离 vTaskStartScheduler() 还差着十万八千里。 */
+
 //以后凡是链接报"Undefined symbol"而头文件里明明有声明，先怀疑是不是没开对应的 INCLUDE_xxx 开关——这是 FreeRTOS 为了省 flash/RAM 故意做的裁剪，编译器抓不到，只有链接器能抓到。
 
-
-#define INCLUDE_vTaskDelay            1   /* 重复定义：保持启用 vTaskDelay()，建议后续删除此行 */
 #define configUSE_PREEMPTION            1   /* 启用抢占式调度：高优先级就绪任务可抢占低优先级任务 */
 #define configMAX_PRIORITIES            (5)      /* 支持的任务优先级数量；实际优先级为 0~4 */
 #define configMINIMAL_STACK_SIZE        (128)    /* 空闲任务最小栈深度，单位为字；32 位 MCU 中 128 字=512 字节 */

@@ -19,6 +19,7 @@
 
 
 /**
+ * 🔴 L0 生死线代码 —— PA1 是芯片复位脚而 GPIO 的 ODR 复位值是 0:必须先 SetBits 再配成输出,顺序写反就把芯片一直摁在复位态,现象是 I2C 一个字节都不应答
  * @brief  CY8CMBR3116 的 RES 复位脚(PA1)初始化
  * @note   RES 低电平有效。GPIO 的 ODR 复位值是 0,所以必须先置 1 再配成输出,
  *         否则一配置成输出就把芯片摁在复位态,后面 I2C 一个字节都不会应答。
@@ -40,6 +41,7 @@ void CY9CM_Config(void)
 
 
 /**
+ * 🟡 L1 架构代码 —— 芯片低功耗时对地址回 NACK 是设计行为,所以重试必须是"重新 START + 重发地址"而不是重发寄存器号;把这条改掉,芯片一打盹所有读写就全失败
  * @brief  发送从机地址字节,被 NACK 就反复重发,直到收到 ACK
  * @param  addr_byte  已含读写位的地址字节(0x6E 写 / 0x6F 读)
  * @return 1=收到应答   0=重试到上限仍未应答
@@ -60,6 +62,7 @@ static uint8_t cy9cm_wait_addr(uint8_t addr_byte)
 
 
 /**
+ * 🟡 L1 架构代码 —— 每个字节后 500us 的间隔是这颗芯片的硬要求(太快会丢字节),返回码 1/2/3 区分失败在哪个相位,是上层决定重试与否的唯一依据
  * @brief  向指定寄存器连续写入若干字节
  * @param  reg   起始寄存器地址(每写一个字节,芯片内部地址自动加一)
  * @param  len   写入字节数
@@ -90,6 +93,7 @@ uint8_t CY9CM_WriteData(uint8_t reg, uint8_t len, const uint8_t *data)
 
 
 /**
+ * 🟡 L1 架构代码 —— 两段独立事务(写寄存器指针并 STOP,再重新 START 发读地址)加"最后一个字节回 NACK",这两点和普通 I2C 读法不同:改错从机会一直占着 SDA 不放
  * @brief  从指定寄存器连续读出若干字节
  * @param  reg   起始寄存器地址(每读一个字节,芯片内部地址自动加一)
  * @param  len   读取字节数
@@ -155,6 +159,7 @@ static const uint8_t CY9CM_RegPara[128] = {
 
 
 /**
+ * 🟡 L1 架构代码 —— 顺序错了会留后遗症的流程:0x86=2 会把写进去的配置烧进芯片自己的 NVS,表写错或保存/复位顺序写错,下次上电仍按错的配置跑,整块触摸板失灵
  * @brief  配置芯片寄存器(可选调用)
  * @param  set_mode  0=芯片已经配置过就跳过(推荐)   1=强制重新配置
  * @note   流程:读 0x8A 判断是否出厂状态 → 从 0x00 写 128 字节配置 →
@@ -228,6 +233,7 @@ void CY9CM_RegConfig(uint8_t set_mode)
 
 
 /**
+ * 🔴 L0 生死线代码 —— 复位脉冲的高低电平和 100ms 长度直接决定芯片有没有 boot 起来(手册的 TI2CBOOT):脉冲改短芯片根本没启动,后面所有 I2C 只会一直 NACK
  * @brief  CY8CMBR3116 完整初始化
  * @note   必须在 i2c_bus_config(&i2c_bus_cy9cm) 之后调用。
  *         先给一个 RES 复位脉冲让芯片从确定状态启动,再按需写配置。
@@ -247,6 +253,7 @@ void CY9CM_Init(void)
 
 
 /**
+ * 🟡 L1 架构代码 —— 必须一次读满 2 字节(bit11 在 0xAB 里),少读一字节就丢键;12 个 case 的位映射是密码键盘的语义,写错不报错、只会一直按出别的字符
  * @brief  读一次按键状态
  * @return 被按下的键字符('0'~'9'、'*'、'#'),没有按键返回 CY9CM_KEY_NONE
  * @note   按键状态在 0xAA(低字节)和 0xAB(高字节)两个寄存器里,
@@ -284,6 +291,7 @@ uint8_t CY9CM_ReadKey(void)
 
 
 /**
+ * 🟡 L1 架构代码 —— static key_flag 的边沿检测决定"一次按压只报一个键":丢掉这层去重,手指按着不放会被反复上报,密码永远输不对
  * @brief  带边沿检测的按键扫描:只在"刚按下"的那一次返回键字符
  * @return 新按下的键字符,没有新按键返回 CY9CM_KEY_NONE
  * @note   按键一直按着时不会重复返回,松手后再次按下才会再返回一次。
@@ -311,6 +319,7 @@ uint8_t CY9CM_KeyScan(void)
 QueueHandle_t cy9cm_key_queue = NULL;
 
 
+// 🟡 L1 架构代码 —— 队列满用 0 超时丢弃而不是阻塞,是"按键丢一个没损失、扫描任务卡住整个触摸板就死了"的取舍;末尾必须是 vTaskDelay(让出 CPU)而不是 Delay_Ms
 static void cy9cm_scan_task(void *pvParameters)
 {
     uint8_t key;
@@ -331,6 +340,7 @@ static void cy9cm_scan_task(void *pvParameters)
     }
 }
 
+// 🟡 L1 架构代码 —— 队列深度(8)和任务栈(256 字,单位是字不是字节)在这里定死:堆一共才 8KB,数字给大了打到 vApplicationMallocFailedHook 就是死循环
 void cy9cm_tasks_init(void)
 {
     cy9cm_key_queue = xQueueCreate(8, sizeof(uint8_t)); // 8 个按键事件缓冲

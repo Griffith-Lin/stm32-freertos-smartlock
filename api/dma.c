@@ -1,6 +1,7 @@
 #include "dma.h"
 
 
+// 🟡 L1 架构代码 —— 把 USART1_RX 绑到 DMA2 流5 通道4,用循环模式+双缓冲+传输完成中断搭出"边收边存 flash"的资源管理策略;流/通道映射要对着 DMA 请求表查
 /*
 Function name:DMA_Font_Config
 Description:DMA的初始化
@@ -53,6 +54,7 @@ void DMA_Font_Config(void)
 }
 
 
+// 🔴 L0 生死线代码 —— 中断服务函数:清 TCIF5 并置 font.sta=DMA_IT;标志漏清会反复进中断把主循环淹掉,与主循环共享 font 结构体的握手错一次就写错 flash 地址
 void DMA2_Stream5_IRQHandler(void)
 {
 	DMA_ClearITPendingBit(DMA2_Stream5,DMA_IT_TCIF5);
@@ -61,6 +63,7 @@ void DMA2_Stream5_IRQHandler(void)
 	font.len=BUFFSIZE;
 }
 
+// 🟡 L1 架构代码 —— 用 font.sta 三态(Free_IT/DMA_IT/Usart_IT)与 DMA 中断握手、轮流写双缓冲;switch 里少一个状态就丢一整块数据,或永远退不出 while(1)
 /*
 Function name:Font_Load
 Description:字库下载函数

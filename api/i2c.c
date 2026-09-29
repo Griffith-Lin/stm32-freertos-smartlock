@@ -20,6 +20,7 @@ const i2c_bus_t i2c_bus_at24c04 =
 };
 
 
+// 🔴 L0 生死线代码 —— 直接写端口 BSRR:低 16 位置位、高 16 位复位,掩码或移位方向算错就是拉错引脚,总线当场锁死
 // ── 引脚读写 ────────────────────────────────────────────────────────────────
 // 原来用 bit-band 宏 PBout(6) 直接写某一位,但 bit-band 别名地址是编译期常量,
 // 引脚一旦变成运行时才知道的参数就用不了了,所以改用 BSRR / IDR 这两个寄存器:
@@ -32,6 +33,7 @@ static void i2c_scl_write(const i2c_bus_t *bus, uint8_t v)
 
 
 
+// 🔴 L0 生死线代码 —— 与 SCL 同款的 BSRR 原子写,掩码错一位就翻到同一端口别的引脚上,而且没有任何断言会发现
 static void i2c_sda_write(const i2c_bus_t *bus, uint8_t v)
 {
     bus->sda_port->BSRR = v ? bus->sda_pin : ((uint32_t)bus->sda_pin << 16);
@@ -53,6 +55,7 @@ static void i2c_sda_write(const i2c_bus_t *bus, uint8_t v)
 
 */
 
+// 🔴 L0 生死线代码 —— 用 IDR & 掩码采引脚真实电平,掩码写错时 ACK 判断就退化成常数,总线看着"通"其实每个字节都在自说自话
 static uint8_t i2c_sda_read(const i2c_bus_t *bus)
 {
     return (bus->sda_port->IDR & bus->sda_pin) ? 1 : 0;
@@ -69,6 +72,7 @@ static uint8_t i2c_sda_read(const i2c_bus_t *bus)
 
 
 /**
+ * 🔴 L0 生死线代码 —— 上电复位时 ODR=0,必须先写 1 再切成输出,顺序反了就一上电把 SCL/SDA 按在低电平;开漏/推挽选错还会和拉伸时钟的从机对顶
  * @brief  初始化一条 bit-bang I2C 总线上的 SCL/SDA 两个引脚
  * @param  bus 总线描述(i2c_bus_cy9cm / i2c_bus_at24c04)
  * @return 无
@@ -142,6 +146,7 @@ SDA 和 SCL 在空闲时都是高电平。
 
 */
 
+// 🟡 L1 架构代码 —— 主机在第九个时钟自己拉/放 SDA 表态的协议封装,ACK(拉低)与 NACK(放开)写反,从机会把"继续发"听成"到此为止"
 // 主机接收从机数据时，主机回应的让从机继续发的应答
 void i2c_master_ack(const i2c_bus_t *bus, uint8_t ack)
 {
@@ -163,6 +168,7 @@ void i2c_master_ack(const i2c_bus_t *bus, uint8_t ack)
     Delay_Us(4); // 保证SCL低电平宽度： I2C标准对SCL低电平持续时间有最小值要求（Standard Mode ≥ 4.7μs，Fast Mode ≥ 1.3μs）。这个延时确保即使后续代码立即执行，也不会违反时序。
 }
 
+// 🟡 L1 架构代码 —— 读从机应答的采样窗口(先放开 SDA 再喂一个时钟),返回 1=ACK 与常见驱动库相反,极性理解反了上层每次读写都会判错
 // 从机接收主机数据后，返回的收应答
 uint8_t i2c_master_wait_ack(const i2c_bus_t *bus)
 {
@@ -193,6 +199,7 @@ uint8_t i2c_master_wait_ack(const i2c_bus_t *bus)
     return ack; // ack==1从机有应答，ack==0从机无应答
 }
 
+// 🟡 L1 架构代码 —— 起始条件=SDA 在 SCL 高电平期间的 1→0 跳变,所以先把两条线拉高再让 SDA 落下;顺序错了从机只会当成一个普通数据位
 // 开始条件的定义要求 SDA 从 1→0 跳变
 void i2c_master_start(const i2c_bus_t *bus)
 {
@@ -205,6 +212,7 @@ void i2c_master_start(const i2c_bus_t *bus)
     i2c_scl_write(bus, 0); // 拉低时钟线，衔接下次传输的时钟线状态
 }
 
+// 🟡 L1 架构代码 —— 停止条件=SDA 在 SCL 高电平期间的 0→1 跳变;先强制 SDA=0 是防御性前提,保证不管上一帧停在哪都能送出 STOP 而不是又一个 START
 /*
 停止条件的定义要求 SDA 从 0→1 跳变，所以 SDA 必须先处于 0"。
 代码中写 SDA=0 是为了确保这个前提条件成立,
@@ -236,6 +244,7 @@ I2C协议支持"多主模式”（总线上可以有多个单片机同时作为�
 如果采用LSBFirst，则低位决定优先级，完全违背了人类对"数值大小与优先级"的直觉映射，也会让硬件状态机的设计变得极其别扭。
 */
 
+// 🟡 L1 架构代码 —— 把一字节拆成 8 个 SCL 周期、MSB 先出(多主仲裁要靠高位先比),末尾自动读一次应答,是 I2C 字节级协议的封装
 // 发送数据（data为发送的数据）
 uint8_t i2c_master_write(const i2c_bus_t *bus, uint8_t data)
 {
@@ -259,6 +268,7 @@ uint8_t i2c_master_write(const i2c_bus_t *bus, uint8_t data)
     return ack;                     //
 }
 
+// 🟡 L1 架构代码 —— 主机在 SCL 低电平放线、高电平采样凑满 8 位,尾随 ACK/NACK 决定从机还发不发;采样相位或位序理解错,读回的就是移位后的垃圾
 // 接收数据
 uint8_t i2c_master_read(const i2c_bus_t *bus, uint8_t ack)
 {
