@@ -28,4 +28,26 @@
  */
 void finger_tasks_init(void);
 
+/**
+ * 🟡 L1 架构代码 —— 跨任务投递意图的入口:置标志就返回,绝不在这里干活;"谁拥有外设谁干活"这条分工是它存在的理由
+ * @brief  请求录入一枚新指纹(管理员模式 444# 派下来的活)
+ * @return 无
+ * @note   **只是投递意图,不是执行**。真正干活的是 finger_task —— 只有它持有
+ *         MG200(USART6)和 PC0(DETECT)那条路。管理员模式不能自己录:一是它
+ *         跑在 lock_task 里,阻塞等手指会让锁的电机状态机停摆;二是两个任务
+ *         同时收发 USART6 必然串帧。
+ * @note   可以在任何任务里调(内部只是置一个字节的标志)。
+ */
+void finger_request_enroll(void);
+
+/**
+ * 🟡 L1 架构代码 —— 同上,而且这条是不可逆的破坏性操作:清空整个指纹库没有任何二次确认
+ * @brief  请求清空指纹库(管理员模式 111# 派下来的活)
+ * @return 无
+ * @note   ⚠ **不可逆**:模块里所有指纹一次全没。
+ * @note   走的命令是 0x54,由 MG200.c 的 mg200_erase_all_timeout() 发出去
+ *         —— 原来的 mg200_erase_all() 用的是无超时收帧,放进任务会永久卡死。
+ */
+void finger_request_erase(void);
+
 #endif
