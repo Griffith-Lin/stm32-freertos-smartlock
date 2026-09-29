@@ -61,9 +61,23 @@
 //    见手册 4.1.16 AT+WCONFIG。
 #define WIFI_PROV_DEADLINE_MS  15000        // 开机多久还没连上 WiFi 就转蓝牙配网
 #define WIFI_PROV_NAME         "DoorLock"   // 广播名,手机搜到的就是它
-#define WIFI_T_PROV_MS         180000       // 配网窗口上限:最多等 3 分钟
+#define WIFI_T_PROV_MS         180000       // 开机那次自动配网的窗口:3 分钟
+                                            // (管理员 555# 那次是 WIFI_PROV_ADMIN_MS)
 #define WIFI_T_PROV_POLL_MS    2000         // 配网期间多久查一次状态
 #define WIFI_PROV_SETTLE_MS    8000         // 窗口关闭后,再等多久判模块自己连上没有
+
+// ── 管理员模式 555# 手动触发的配网 ──
+//   开机那次自动配网给 3 分钟(用户可能不在旁边),手动这次只给 20 秒:
+//   人是站在锁前面按的 555#,掏手机、开 App、连 BLE、填 SSID 全在这 20 秒里。
+//   ⚠ 实测这个窗口很紧 —— 手机要先在系统设置里连上模块的 BLE 广播才能用
+//     ESP BluFi App。嫌短就改这一个宏。
+#define WIFI_PROV_ADMIN_MS     20000
+// 收尾时结果在屏上停多久(和 admin.h 的 ADMIN_MSG_MS 同量级)
+#define WIFI_PROV_MSG_MS       1500
+// 中断上一次 AT 等待之后,等模块把那条命令的应答吐完再整批倒掉
+#define WIFI_PROV_FLUSH_MS     100
+// 可被打断的延时按这个粒度切片
+#define WIFI_DELAY_SLICE_MS    50
 
 // 一次 AT+WJAP 至少得给这么多时间,否则连"发出去 + 模块回话"都不够,
 // 试了只会白发一条命令、留一个没人收的应答在缓冲里,把下一次读行搞乱。
@@ -98,6 +112,50 @@ static char s_at_prev[64];
 //    状态 —— 正好是这里最想避免的事。
 //    所以它是"尝试过"的意思,**不是**"配成了"(成不成只看 wifi_is_wifi_up())。
 static uint8_t s_prov_tried = 0;
+
+// ── 管理员模式 555# 的手动配网请求 ──
+//   admin 跑在 lock_task 里,配网跑在 wifi_task 里,所以这两个标志是跨任务的。
+//   置位是单字节写(Cortex-M4 上原子),"取出并清零"那一步才要临界区 ——
+//   见 wifi_take_prov_request()。
+static volatile uint8_t s_prov_req = 0;     // 有一张待办的手动配网请求
+static volatile uint8_t s_prov_run = 0;     // 正在配网中
+
+/**
+ * 🟡 L1 架构代码 —— "取出 + 清零"必须在同一个临界区:取出来之后、清零之前对方又置了一次,这次请求就被这次清零吃掉了;而这条原子性是"按下 555# 一定会被处理"的唯一保证
+ * @brief  取出并清掉一张待办的手动配网请求
+ * @return 1 = 有;0 = 没有
+ */
+static uint8_t wifi_take_prov_request(void)
+{
+    uint8_t req = 0;
+
+    taskENTER_CRITICAL();
+    if (s_prov_req)
+    {
+        s_prov_req = 0;
+        req = 1;
+    }
+    taskEXIT_CRITICAL();
+
+    return req;
+}
+
+// 🟢 L2 工具代码 —— 纯置位,没有副作用也没有先后要求;"投递意图而非执行"这条分工由调用方遵守
+void wifi_request_provision(void)
+{
+    // 已经在配网了就别再置位。理由不是"省一次操作",而是 s_prov_req 在配网
+    // 期间是**低层 AT 等待的打断开关**(见 wifi_get_byte)—— 配网中途被置位,
+    // 最要紧的那条收尾命令 AT+WCONFIG=0 会被截断,模块就一直停在配网模式,
+    // 等于长期开着"旁边谁都能把锁改到别的 WiFi 上去"的口子。
+    if (s_prov_run)
+    {
+        printf("配网:已经在配网中,忽略这次请求\r\n");
+        return;
+    }
+
+    s_prov_req = 1;
+    printf("配网:收到手动配网请求(管理员模式 555#)\r\n");
+}
 
 
 /**
@@ -177,11 +235,26 @@ static void wifi_send_line(const char *s)
  * @note   **只能在任务上下文调用** —— 缓冲空的时候用 vTaskDelay 让出 CPU。
  *         不用忙等:联网这种"等几百毫秒很正常"的场合,忙等会把
  *         同优先级和低优先级的任务全饿死。
+ * @note   这里是**所有 AT 等待的唯一咽喉**,所以"手动配网请求要立刻生效"
+ *         这件事也放在这儿:管理员按 555# 时,wifi_task 很可能正卡在一条
+ *         超时 25 秒的 AT+WJAP 里等应答,不打断的话 20 秒的配网窗口
+ *         等它醒过来就已经过去一大半了。返回 0 会被上层当成"超时",
+ *         整条调用栈会一层层很快退回 wifi_task。
+ *         ⚠ 打断会留下"没人收的应答",所以 wifi_task 处理请求前必须先
+ *           wifi_prov_flush_rx() 倒一次,理由见那个函数。
+ * @note   判断只看 s_prov_req,不看 s_prov_run:配网期间 s_prov_req 恒为 0
+ *         (wifi_request_provision 会拒绝在配网中置位),所以配网自己发出去的
+ *         命令不会被自己打断。
  */
 static uint8_t wifi_get_byte(uint8_t *out, uint32_t start, uint32_t timeout_ms)
 {
     while (s_rx_head == s_rx_tail)
     {
+        if (s_prov_req)
+        {
+            return 0;
+        }
+
         if ((GetTim10Tick() - start) >= timeout_ms)
         {
             return 0;
@@ -269,6 +342,16 @@ static uint8_t wifi_at_ex(const char *cmd, const char *watch,
     {
         uint32_t elapsed = GetTim10Tick() - start;
 
+        // 管理员按了 555#:当场放弃这条命令。放在这个位置(而不是只写在
+        // wifi_get_byte 里)是因为 wifi_get_byte 一返回 0,下面那句 continue
+        // 会立刻转回来 —— 没有这一句就是空转烧 CPU,烧到 timeout_ms 为止,
+        // 而 WJAP 的超时是 25 秒。
+        if (s_prov_req)
+        {
+            printf("AT< [手动配网请求,中断本条命令的等待]\r\n");
+            return 0;
+        }
+
         if (elapsed >= timeout_ms)
         {
             printf("AT< [超时] 等了 %ums 没等到 OK/ERROR\r\n", (unsigned)timeout_ms);
@@ -350,6 +433,14 @@ static uint8_t wifi_wait_event(const char *token, uint32_t timeout_ms)
     for (;;)
     {
         uint32_t elapsed = GetTim10Tick() - start;
+
+        // 和 wifi_at_ex 里那一句同理:这里是等 +EVENT 的地方,
+        // 而 +EVENT:MQTT_CONNECT 的超时是 15 秒,不打断就白等。
+        if (s_prov_req)
+        {
+            printf("AT< [手动配网请求,中断等待 %s]\r\n", token);
+            return 0;
+        }
 
         if (elapsed >= timeout_ms)
         {
@@ -862,7 +953,8 @@ static void wifi_handle_sub_event(const char *line)
 /**
  * 🟡 L1 架构代码 —— 常驻收发循环的调度策略:有主动上报就先处理事件(别急着发心跳),收到 MQTT_DISCONNECT 立刻返回交给上层,而不是自己硬撑——只重连不重订阅会"连上了却收不到消息"
  * @brief  MQTT 就绪之后的常驻循环:转发上报 + 定时发心跳
- * @note   只有 MQTT 掉线才返回,交给上层重连。
+ * @note   两个返回条件:MQTT 掉线(交给上层重连),或者管理员按了 555#
+ *         (交给 wifi_task 那个循环去配网)。
  */
 static void wifi_session(void)
 {
@@ -874,6 +966,15 @@ static void wifi_session(void)
 
     for (;;)
     {
+        // 管理员按了 555# —— 本任务正卡在这个永不退出的循环里,
+        // 不主动看一眼的话请求永远没人受理。真正的配网在 wifi_task
+        // 的循环顶上做(那里才有 AT 状态机的上下文)。
+        if (s_prov_req)
+        {
+            printf("!! 管理员要求手动配网,退出常驻收发\r\n");
+            return;
+        }
+
         // 把模块主动上报的东西打出来。
         // +EVENT:MQTT_SUB,<topic>,<len>,<data> 就是订阅到的云端消息。
         n = wifi_read_line(line, sizeof(line), 500);
@@ -974,34 +1075,156 @@ static int wifi_wifi_config_status(void)
 
 
 /**
+ * 🟢 L2 工具代码 —— 只倒缓冲不解协议;唯一要守的是"必须等残应答发完再倒",早倒等于把模块的下一句话当成自己的应答
+ * @brief  中断过一次 AT 等待之后,把模块那条命令剩下的应答整批倒掉
+ * @note   为什么要先等 100ms:wifi_get_byte 是**硬掐断**等待的,模块那边
+ *         一个字都还不知道,它接着会把整条应答发完。不发完就倒,这些字节会
+ *         落在后面 AT+WCONFIG? 的头上 —— 最坏是一个残留的 "OK" 让这次查询
+ *         "命令成功但内容为空",被 wifi_ble_provision 的 st < 0 分支误判成
+ *         "固件太老不支持配网",整个配网入口就这么没了。
+ */
+static void wifi_prov_flush_rx(void)
+{
+    vTaskDelay(pdMS_TO_TICKS(WIFI_PROV_FLUSH_MS));
+
+    s_rx_tail = s_rx_head;
+}
+
+/**
+ * 🟢 L2 工具代码 —— 分片睡,只比 vTaskDelay 多一件事:每片问一次"有人按 555# 吗";没人按的话它和 vTaskDelay 完全等价
+ * @brief  可被手动配网请求打断的延时
+ * @param  ms 最多睡多久
+ * @return 1 = 被配网请求打断(没睡够);0 = 睡满了
+ * @note   为什么不能让 vTaskDelay 一觉睡 10 秒:那 10 秒里按的 555# 要等睡醒
+ *         才被看见,而配网窗口只有 20 秒 —— 等于窗口白白短了一半。
+ */
+static uint8_t wifi_delay(uint32_t ms)
+{
+    uint32_t start = GetTim10Tick();
+
+    while ((GetTim10Tick() - start) < ms)
+    {
+        if (s_prov_req)
+        {
+            return 1;
+        }
+        vTaskDelay(pdMS_TO_TICKS(WIFI_DELAY_SLICE_MS));
+    }
+
+    return 0;
+}
+
+/**
+ * 🟢 L2 工具代码 —— 只画六行字,没有状态;抢不到屏就返回 0 让调用方"活照干、别画界面"
+ * @brief  配网开始时占屏并画提示
+ * @param  admin_ui 1 = 管理员模式 555# 触发的;0 = 开机自动那次
+ * @return 1 = 占到了大提示区(只有 admin_ui 时才可能);0 = 没占屏
+ * @note   两条路的画面位置不同,是因为**谁能碰标题行不一样**:
+ *           开机那次锁还空闲(s_unlocking == 0),标题行没人抢,改它最省事,
+ *           而且不占大提示区就不会和密码输入行打架;
+ *           管理员那次锁刚开完、lock_tick() 还在跑,再去写标题行就是两个任务
+ *           同时写软件 SPI 的 LCD,画出来是花屏 —— 所以走 lock_screen_take()
+ *           占大提示区(全工程统一的那套协议,见 lock.h)。
+ * @note   抢不到屏(比如上一次 333# 加卡还在等卡放上来)不报错,串口照样有
+ *         全过程,只是屏上没有。
+ */
+static uint8_t wifi_prov_ui_begin(uint8_t admin_ui)
+{
+    if (!admin_ui)
+    {
+        // 屏幕这时停在锁的 "PASSWORD" 界面。不给提示的话,用户只会觉得"锁坏了",
+        // 不会想到要掏手机。所以必须占一下屏。
+        lock_lcd_set_title((uint8_t *)"BLE PROV", MAGENTA);
+        return 0;
+    }
+
+    if (!lock_screen_take(LOCK_SCREEN_WIFI))
+    {
+        printf("配网:屏幕正被别的流程占着,本次只有串口提示\r\n");
+        return 0;
+    }
+
+    lock_lcd_big_line(0, "BLUETOOTH PROV");
+    lock_lcd_big_line(1, "OPEN ESP BLUFI APP");
+    lock_lcd_big_line(2, "FIND: " WIFI_PROV_NAME);
+    lock_lcd_big_line(3, "SEND WIFI TO IT");
+    lock_lcd_big_line(4, "");
+    lock_lcd_big_line(5, "");
+
+    return 1;
+}
+
+/**
+ * 🟢 L2 工具代码 —— 收尾画结果、还屏;成败两条路都走它,保证"离开这个函数时屏幕一定还回去了"
+ * @brief  配网结束时的收尾画面
+ * @param  admin_ui 同上
+ * @param  got_ui   wifi_prov_ui_begin() 的返回值
+ * @param  l2/l3    结果两行文字(只有管理员那条路用得上,开机那条路忽略)
+ * @note   标题行那条路(开机)不管成没成都得还原:联网失败绝不能连累开门,
+ *         屏幕回到能输密码的状态,锁至少还能用。
+ */
+static void wifi_prov_ui_end(uint8_t admin_ui, uint8_t got_ui,
+                             const char *l2, const char *l3)
+{
+    if (!admin_ui)
+    {
+        lock_lcd_set_title((uint8_t *)"PASSWORD", BLUE);
+        return;
+    }
+
+    if (!got_ui)
+    {
+        return;
+    }
+
+    lock_lcd_big_line(2, l2);
+    lock_lcd_big_line(3, l3);
+    lock_lcd_big_line(4, "");
+
+    vTaskDelay(pdMS_TO_TICKS(WIFI_PROV_MSG_MS)); // 让结果在屏上停一下
+
+    lock_screen_give(LOCK_SCREEN_WIFI);
+}
+
+/**
  * 🟡 L1 架构代码 —— 配网流程的骨架:先问固件认不认这条命令、模块已经在配网就别再踢它一脚、成功判据落在 AT+WJAP? 的联网结果上而不是模块的任务状态(实测它会一直赖着报 2),收工无论成败都必须显式关掉窗口,否则设备长期开着"谁都能把它配到别的网"的口子
  * @brief  开一次蓝牙配网,阻塞到配网窗口结束
- * @return 1 = 配网后模块确实连上 WiFi 了;0 = 没成(超时 / 模块不支持 / 用户没来)
- * @note   只在"开机 WIFI_PROV_DEADLINE_MS 内没连上 WiFi"时调用,**且只调一次**。
- * @note   手机端要装 **ESP BluFi** App(Espressif 官方的),连上模块开的热点,
+ * @param  window_ms 配网窗口最多开多久(开机那次 3 分钟,管理员 555# 那次 20 秒)
+ * @param  admin_ui  1 = 管理员模式触发的:占大提示区、不碰标题行
+ *                   0 = 开机自动那次:改标题行、不占大提示区
+ * @return 1 = 配网后模块确实连上 WiFi 了(凭据已经写进 EEPROM);0 = 没成
+ * @note   两个调用点:开机 WIFI_PROV_DEADLINE_MS 内没连上 WiFi 时**只调一次**
+ *         (由 s_prov_tried 拦着),以及管理员模式 555# 手动触发。
+ * @note   手机端要装 **ESP BluFi** App(Espressif 官方的),连上模块开的广播,
  *         把 WiFi 名和密码发过去。模块收到后自己连,连上会发
  *         +EVENT:WIFI_CONNECT / +EVENT:WIFI_GOT_IP。
- * @note   ⚠ 屏幕这条线:LCD 现在归 lock_task 管(见 lock.h 里 lock_cmd_t 的说明)。
- *         这里**直接调 lock_lcd_set_title() 是踩线的**,之所以还算安全,是因为
- *         配网只发生在开机阶段,那时锁一定空闲(s_unlocking == 0),和 lock_task /
- *         finger_task 撞不上 —— 它们要么在等队列,要么在等 100ms 轮询。
- *         **但要是以后加了"按键手动触发配网",这个前提立刻就没了** ——
- *         那时必须改成往 lock_task 投一条"显示这段文字"的命令,由它统一出图,
- *         否则两个任务同时写软件 SPI 的 LCD,画出来的就是花屏。
+ * @note   ⚠ 屏幕这条线:原来这里**只有开机那条路**,所以直接写标题行是安全的
+ *         —— 那时锁一定空闲(s_unlocking == 0),和 lock_task / finger_task
+ *         撞不上。加了 555# 之后这个前提就没了:管理员模式是在 lock_task 还在
+ *         跑 tick 的时候进来的,两个任务同时写软件 SPI 的 LCD 就是花屏。
+ *         所以现在按 admin_ui 分成两套 —— 这个分叉是必须的,不是洁癖,
+ *         见 lock.h 里 LOCK_SCREEN_xxx 的说明。
  */
-static uint8_t wifi_ble_provision(void)
+static uint8_t wifi_ble_provision(uint32_t window_ms, uint8_t admin_ui)
 {
     uint32_t start;
     uint8_t  fails = 0;
     uint8_t  got_link = 0;      // 轮询期间就确认"已经连上 WiFi"了
+    uint8_t  got_ui;
     int      st;
 
-    printf("\r\n==== 开机 %u 秒仍未连上 WiFi,转入蓝牙配网 ====\r\n",
-           (unsigned)(WIFI_PROV_DEADLINE_MS / 1000));
+    if (admin_ui)
+    {
+        printf("\r\n==== 管理员模式 555#:手动开始蓝牙配网(%u 秒窗口)====\r\n",
+               (unsigned)(window_ms / 1000));
+    }
+    else
+    {
+        printf("\r\n==== 开机 %u 秒仍未连上 WiFi,转入蓝牙配网 ====\r\n",
+               (unsigned)(WIFI_PROV_DEADLINE_MS / 1000));
+    }
 
-    // 屏幕这时停在锁的 "PASSWORD" 界面。不给提示的话,用户只会觉得"锁坏了",
-    // 不会想到要掏手机。所以必须占一下屏。
-    lock_lcd_set_title((uint8_t *)"BLE PROV", MAGENTA);
+    got_ui = wifi_prov_ui_begin(admin_ui);
 
     // ── 先确认固件认不认这条命令 ──
     //    AT+WCONFIG 是 Combo 模块的通用命令,但固件版本老了可能没有。
@@ -1017,7 +1240,7 @@ static uint8_t wifi_ble_provision(void)
     if (st < 0)
     {
         printf("!! 模块不支持 AT+WCONFIG(固件太老?),跳过蓝牙配网\r\n");
-        lock_lcd_set_title((uint8_t *)"PASSWORD", BLUE);
+        wifi_prov_ui_end(admin_ui, got_ui, "NO AT+WCONFIG", "CHECK FIRMWARE");
         return 0;
     }
     printf("当前配网状态: %d\r\n", st);
@@ -1040,7 +1263,7 @@ static uint8_t wifi_ble_provision(void)
             if (wifi_wifi_config_status() != 2)
             {
                 printf("!! 蓝牙配网启动失败\r\n");
-                lock_lcd_set_title((uint8_t *)"PASSWORD", BLUE);
+                wifi_prov_ui_end(admin_ui, got_ui, "START FAILED", "KEEP OLD WIFI");
                 return 0;
             }
             printf("启动命令报错,但模块已进入配网状态,继续等待\r\n");
@@ -1049,7 +1272,7 @@ static uint8_t wifi_ble_provision(void)
 
     printf("蓝牙配网已开启:手机装 ESP BluFi App,搜 \"%s\",填 WiFi 名和密码\r\n",
            WIFI_PROV_NAME);
-    printf("最多等 %u 秒\r\n", (unsigned)(WIFI_T_PROV_MS / 1000));
+    printf("最多等 %u 秒\r\n", (unsigned)(window_ms / 1000));
 
     // ── 等窗口结束 ──
     //    模块**不会**为"配网成功"单独发一个事件 —— 它直接自己连上去。
@@ -1057,10 +1280,10 @@ static uint8_t wifi_ble_provision(void)
     start = GetTim10Tick();
     for (;;)
     {
-        if ((GetTim10Tick() - start) >= WIFI_T_PROV_MS)
+        if ((GetTim10Tick() - start) >= window_ms)
         {
             printf("!! 蓝牙配网超时:%u 秒没人来配,收工\r\n",
-                   (unsigned)(WIFI_T_PROV_MS / 1000));
+                   (unsigned)(window_ms / 1000));
             break;
         }
 
@@ -1132,23 +1355,49 @@ static uint8_t wifi_ble_provision(void)
         vTaskDelay(pdMS_TO_TICKS(WIFI_PROV_SETTLE_MS));
     }
 
-    // 配网期间屏幕被占着,不管成没成都还回去。
-    // 联网失败绝不能连累开门 —— 屏幕回到能输密码的状态,锁至少还能用。
-    lock_lcd_set_title((uint8_t *)"PASSWORD", BLUE);
-
     if (got_link || wifi_is_wifi_up())
     {
+        uint8_t saved;
+
         printf("---- 蓝牙配网成功,模块已连上 WiFi ----\r\n");
 
         // **这一处最要紧**:用户刚用手机把 WiFi 名和密码发给了**模块**,
         // 固件手里一个字都没有。不从模块那儿抄一份存进 EEPROM,下次上电
         // 固件就没有凭据可用,只能又掉回配网 —— 用户的辛苦等于白费。
-        wifi_ap_creds_save();
+        saved = wifi_ap_creds_save();
+
+        // 存没存进去要分开说。连上了但没存成的现象是"现在能用、一重启就变回
+        // 旧网",这种事不说明白,用户只会以为锁坏了 —— 而且下一次上电它真的
+        // 会回旧网,那时候再查就晚了。
+        wifi_prov_ui_end(admin_ui, got_ui,
+                         "PROV OK",
+                         saved ? "NEW WIFI SAVED" : "SAVE FAILED");
         return 1;
     }
 
     printf("---- 蓝牙配网没成 ----\r\n");
+    wifi_prov_ui_end(admin_ui, got_ui, "PROV FAILED", "KEEP OLD WIFI");
     return 0;
+}
+
+/**
+ * 🟡 L1 架构代码 —— s_prov_run 的置位/清位就靠它包住:wifi_ble_provision() 里有三个 return,散着写迟早漏一个,而漏了的现象是"配网结束后再也受理不了新的 555#",从表面完全看不出和这里有关
+ * @brief  配网期间把"别受理新请求"的闸门关上
+ * @param  window_ms 配网窗口最多开多久
+ * @param  admin_ui  1 = 管理员模式触发的
+ * @return wifi_ble_provision() 的返回值
+ * @note   放在 wifi_ble_provision() **后面**是为了不用前置声明;调用方
+ *         (wifi_task)更靠后,所以顺序上没问题。
+ */
+static uint8_t wifi_ble_provision_run(uint32_t window_ms, uint8_t admin_ui)
+{
+    uint8_t ok;
+
+    s_prov_run = 1;
+    ok = wifi_ble_provision(window_ms, admin_ui);
+    s_prov_run = 0;
+
+    return ok;
 }
 
 
@@ -1167,6 +1416,10 @@ static uint8_t wifi_ble_provision(void)
  *         所以"换 WiFi"这个动作只需要做一次,不用重新烧录固件。
  * @note   配网只自动做一次 —— 每次都进的话,设备会没完没了地变成可被配网状态,
  *         既费电又开着个安全口子。
+ * @note   **另一个入口是管理员模式 555#**(见 wifi_request_provision):
+ *         换 WiFi 不用重新烧录,也不用等开机那次。这条请求是跨任务来的,
+ *         所以循环顶上先查它,而且"等 10 秒重试"那种长延时被换成了
+ *         wifi_delay() 分片睡 —— 不然 20 秒的配网窗口会被睡掉一半。
  */
 static void wifi_task(void *arg)
 {
@@ -1217,11 +1470,40 @@ static void wifi_task(void *arg)
     //    (优先级 1,就算永远在这儿打转也抢不了任何业务任务的 CPU。)
     for (;;)
     {
+        // ── 管理员模式 555# 派下来的手动配网:最优先 ──
+        //    放在循环最顶上,是要让它在**任何状态下**都能被受理 ——
+        //    wifi_task 平时可能在等 10 秒重试、可能在 25 秒的 WJAP 里、
+        //    也可能卡在下面那个永不退出的 wifi_session() 里。
+        if (wifi_take_prov_request())
+        {
+            // 上一条命令的应答可能还在路上(我们刚才是硬掐断它的等待的)。
+            // 不等它发完就直接开配网,那些残字节会被 AT+WCONFIG? 当成自己的
+            // 应答 —— 最坏是一个残留的 "OK" 让查询"成功但没内容",被误判成
+            // "固件不支持配网"直接放弃。理由详见 wifi_prov_flush_rx()。
+            wifi_prov_flush_rx();
+
+            if (wifi_ble_provision_run(WIFI_PROV_ADMIN_MS, 1))
+            {
+                // 配网成功:新凭据已经在 EEPROM 里了,重新读一份到局部变量,
+                // 下面那趟就用新的连 —— 这就是"成功即修改 rom,使用新网络"。
+                have_cred = wifi_cfg_load(ssid, pwd);
+            }
+
+            // 不管成没成都回循环顶重走一遍:成了就用新网连,没成就拿手上
+            // 这对旧凭据继续重试 —— 也就是"配网失败就继续使用当前网络"。
+            // (失败时不重新 load,ssid/pwd 还是原来的内容。)
+            continue;
+        }
+
         if (!wifi_at_cmd("AT", WIFI_T_AT_MS))
         {
             printf("!! 模块没应答,检查 PA2/PA3 是否和 WB2 的 RX/TX 交叉接好、是否共地\r\n");
             printf("   %dms 后重试\r\n", WIFI_RETRY_MS);
-            vTaskDelay(pdMS_TO_TICKS(WIFI_RETRY_MS));
+
+            // 分片睡:整整 10 秒里按的 555# 得等到睡醒才被看见,
+            // 而配网窗口一共才 20 秒。被请求打断的话睡不满也没关系 ——
+            // 下面那句 continue 本来就要回循环顶,那里会受理它。
+            wifi_delay(WIFI_RETRY_MS);
             continue;
         }
 
@@ -1246,11 +1528,22 @@ static void wifi_task(void *arg)
         //    && 会短路:WiFi 没通就不去连 MQTT 了(反正必然失败,还白等 15s)
         if (up && wifi_mqtt_connect())
         {
-            wifi_session();     // 常驻收发,只有 MQTT 掉线才返回
+            wifi_session();     // 常驻收发,只有 MQTT 掉线(或管理员要配网)才返回
 
             // 从上面出来只说明 MQTT 掉了,WiFi 未必也掉了 —— 重新问一次,
             // 免得下面把"MQTT 掉线"误判成"WiFi 连不上"而去开蓝牙配网。
             up = wifi_is_wifi_up();
+        }
+
+        // ── 有人按了 555# → 回循环顶把它办掉 ──
+        //    这一步必须夹在这里,不能只写在 wifi_session() 里:
+        //    上面**任何一条 AT 命令**都可能被 555# 掐断(wifi_get_byte 是硬
+        //    中断等待的),掐断的结果会一路装成"连不上"。掉进下面那条路的话,
+        //    轻则白等 10 秒,重则拿这个假失败去开开机那次**3 分钟**的自动配网
+        //    —— 而用户按 555# 想要的明明是 20 秒那次。
+        if (s_prov_req)
+        {
+            continue;
         }
 
         // ── 3. 还是没连上 → 开一次蓝牙配网 ──
@@ -1262,7 +1555,7 @@ static void wifi_task(void *arg)
         {
             s_prov_tried = 1;   // 进门就置位:哪怕配网中途异常返回,也只做这一次
 
-            if (wifi_ble_provision())
+            if (wifi_ble_provision_run(WIFI_T_PROV_MS, 0))
             {
                 // 配网成功,凭据已经由 wifi_ap_creds_save() 写进 EEPROM 了,
                 // 这里重新读一份到局部变量,下面几轮循环就用新的连。
@@ -1274,7 +1567,7 @@ static void wifi_task(void *arg)
         }
 
         printf("!! 联网未就绪,%dms 后重试\r\n", WIFI_RETRY_MS);
-        vTaskDelay(pdMS_TO_TICKS(WIFI_RETRY_MS));
+        wifi_delay(WIFI_RETRY_MS);  // 分片睡,见函数说明
     }
 }
 

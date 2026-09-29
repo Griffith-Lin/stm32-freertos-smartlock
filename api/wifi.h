@@ -38,4 +38,19 @@ void wb2_Config(void);
  */
 void wifi_tasks_init(void);
 
+/**
+ * 🟡 L1 架构代码 —— "投递意图而非执行"这条分工的入口:它只置一个标志就返回,配网本身由 wifi_task 做;AT 命令和 USART2 的环形缓冲都只归那一个任务,谁都能发命令的话两边的超时会互相把对方的应吃掉
+ * @brief  请求开一次蓝牙配网(管理员模式 555# 用),**非阻塞**
+ * @return 无
+ * @note   **只能在任务里调**。admin 跑在 lock_task 里,所以这里是跨任务投递,
+ *         真正的动作由 wifi_task 执行 —— USART2 的收发和那条 AT 状态机
+ *         只归 wifi_task 一家,别的任务直接发 AT 命令会把它的读行打乱。
+ * @note   配网建议是阻塞的(要等用户掏手机),所以这里绝不能同步等 ——
+ *         那会把 lock_task 卡住,锁的 tick 一停就不回锁了。
+ * @note   已经在配网时这次请求会被丢掉并打印一行日志:配网期间那串 AT 命令
+ *         不能被新的请求打断(最要紧的是收尾那条 AT+WCONFIG=0,被截了就
+ *         等于把"谁都能配网"的口子一直开着)。
+ */
+void wifi_request_provision(void);
+
 #endif // !__WIFI_
