@@ -37,17 +37,20 @@
 //
 //      APP_USE_WIFI ┐
 //      APP_USE_LOCK ┼→  APP_USE_LCD  →  (SPI + W25Q)
-//      APP_USE_FINGER┘    显示屏          字库存在 W25Q 里
-//        往屏幕上写字      显示组件
+//      APP_USE_FINGER┤    显示屏          字库存在 W25Q 里
+//      APP_USE_RFID ┘  显示组件
+//        往屏幕上写字
 //
 //      APP_USE_FINGER  →  APP_USE_LOCK  →  APP_USE_TOUCH
-//       指纹比对通过      密码锁状态机      电容触摸板
-//       走锁的开锁流程    驱动电机/LCD      密码从这儿来
+//      APP_USE_RFID       密码锁状态机      电容触摸板
+//      比对通过后          驱动电机/LCD      密码从这儿来
+//      走锁的开锁流程
 
 #define APP_USE_TOUCH   1   // CY8CMBR3116 电容触摸板(密码的输入源)
 #define APP_USE_LOCK    1   // 密码锁:触摸板输入 → 校验 → 驱动 L9110S(依赖 TOUCH)
 #define APP_USE_FINGER  1   // MG200 指纹(依赖 LOCK:比对通过后走同一个开锁流程)
-#define APP_USE_LCD     1   // 240x320 屏(依赖它的有 LOCK/FINGER/WIFI 的界面)
+#define APP_USE_RFID    1   // RC522 刷卡(依赖 LOCK:同理,和指纹是并列的第二条本地开锁来源)
+#define APP_USE_LCD     1   // 240x320 屏(依赖它的有 LOCK/FINGER/RFID/WIFI 的界面)
 
 // ── 调试用的小开关 ──
 
@@ -69,6 +72,10 @@
 #error "配置冲突:APP_USE_FINGER 需要 APP_USE_LOCK —— 指纹比对通过后走的是锁的开锁流程"
 #endif
 
+#if APP_USE_RFID && !APP_USE_LOCK
+#error "配置冲突:APP_USE_RFID 需要 APP_USE_LOCK —— 刷卡通过后走的是锁的开锁流程"
+#endif
+
 // 下面三条是同一类:这三个组件都要往屏幕上写字,关了 LCD 它们就没有嘴了。
 // 严格说这不是"不能编译"(画面调用会一起被 #if 掉),而是**功能残废**——
 // 锁按了没反应、指纹认证看不到提示、配网不知道进行到哪一步。
@@ -79,6 +86,10 @@
 
 #if APP_USE_FINGER && !APP_USE_LCD
 #error "配置冲突:APP_USE_FINGER 需要 APP_USE_LCD —— 指纹任务要往屏幕上写标题"
+#endif
+
+#if APP_USE_RFID && !APP_USE_LCD
+#error "配置冲突:APP_USE_RFID 需要 APP_USE_LCD —— 刷卡的结果要显示在屏幕上"
 #endif
 
 #if APP_USE_WIFI && !APP_USE_LCD
