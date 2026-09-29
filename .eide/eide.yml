@@ -17,6 +17,7 @@ virtualFolder:
         - path: user/stm32f4xx_it.c
         - path: user/learn.c
         - path: user/learn.h
+        - path: user/app_config.h
       folders: []
     - name: api
       files:
@@ -50,6 +51,10 @@ virtualFolder:
         - path: api/wifi.h
         - path: api/wifi_cfg.c
         - path: api/wifi_cfg.h
+        - path: api/rfid.c
+        - path: api/rfid.h
+        - path: api/rc522_task.c
+        - path: api/rc522_task.h
       folders: []
     - name: startup
       files:
