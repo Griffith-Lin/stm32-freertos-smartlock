@@ -13,6 +13,7 @@
 #include "i2c.h"      // i2c_bus_config(CY9CM 和 AT24C04 两条总线)
 #include "CY9CM.h"    // CY9CM_Init / cy9cm_tasks_init
 #include "lock.h"     // lock_init / lock_tasks_init
+#include "rc522_task.h" // rc522_init / rc522_tasks_init
 #include "MG200.h"    // mg200_Config / mg200_get_figer_num
 #include "finger.h"   // finger_tasks_init
 #include "NV400.h"    // NV400F_Init / NV400F_DelayUs
@@ -104,6 +105,10 @@ int main()
     usart1_Config(115200);
     led_Config();
 
+
+
+
+
     // ===== 按 APP_USE_xxx 裁剪的外设初始化(开关在 user/app_config.h)=====
     // ⚠ 这些 #if 块之间的**顺序不能动**,它是硬依赖链:
     //      spi1_w25_Config 必须在 LCD_Init 之前 —— 屏的字库就存在 W25Q 里
@@ -143,7 +148,14 @@ int main()
     // 必须在调度器起来之前调用 —— 首次上电会走一次 EEPROM 写,而那是忙等。
     lock_init();
 #endif
-   
+
+#if APP_USE_RFID
+    // 刷卡:配 RC522(SPI3,PC10/PC11/PC12)+ 从 EEPROM 载入已授权的卡号。
+    // 也必须赶在调度器起来之前 —— RC522 的复位脉冲和 EEPROM 读都是裸机忙等。
+    // ⚠ 必须排在 i2c_bus_config(&i2c_bus_at24c04) 之后:它要读 EEPROM 里的卡号。
+    rc522_init();
+#endif
+
 #if APP_USE_VOICE
     NV400F_Init();
     NV400F_DelayUs(300000); // 等模块上电初始化:手册要求 >200ms,这里给 300ms
@@ -164,6 +176,10 @@ int main()
 #endif
 
 
+
+
+
+
     // ===== 业务任务 =====
     // 任务栈是 xTaskCreate 时从 FreeRTOS 那 12KB 堆里切走的,建了就永久占着
     // (跟它干不干活无关)。全开时约 1728 字 ≈ 6.9KB,占掉堆的一多半 ——
@@ -179,6 +195,9 @@ int main()
 #endif
 #if APP_USE_FINGER
     finger_tasks_init(); // 指纹锁:轮询 MG200 的 DETECT 脚,比对通过后走同一个开锁流程
+#endif
+#if APP_USE_RFID
+    rc522_tasks_init();  // 刷卡:轮询 RC522 寻卡,卡号对上了走同一个开锁流程
 #endif
 #if APP_USE_WIFI
     wifi_tasks_init();   // 联网:WB2 模块跑 AT 命令连 WiFi→MQTT,优先级最低(1)
