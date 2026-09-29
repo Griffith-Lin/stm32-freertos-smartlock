@@ -51,4 +51,30 @@ void mg200_compare(void);
  *         语句上出不来。本函数用 TIM10 的 1ms 时基计时,超时立刻返回。
  */
 uint8_t mg200_rec_timeout(MG_rec_data *rec, uint32_t timeout_ms);
+
+/**
+ * 🟡 L1 架构代码 —— "先清残字节 → 再发 → 再带超时收"这三步的顺序就是它的全部契约:少了清残字节,上一帧的尾巴会和这一帧拼起来;少了超时,任务就卡死
+ * @brief  发一条命令并收一帧应答(任务里发命令统一走这里)
+ * @param  cmd        命令码
+ * @param  para       参数
+ * @param  rec        输出:收到的应答
+ * @param  timeout_ms 从开始找帧头算起的**总**超时,单位 ms
+ * @return 1 = 收到了一帧(是否合法看 rec->valid 或 check_rec());0 = 超时
+ * @note   发之前会先把 USART6 接收缓冲里没收干净的字节丢掉。
+ *         上一次没收干净的尾巴(校验失败的帧、上电毛刺)会和这一次的应答拼在
+ *         一起,让帧同步从错误的 0x6C 开始 —— 这就是 CLAUDE.md 里记的那个历史 bug,
+ *         所以这一步不能省。
+ */
+uint8_t mg200_cmd(uint8_t cmd, uint8_t para, MG_rec_data *rec, uint32_t timeout_ms);
+
+/**
+ * 🔴 L0 生死线代码 —— 不可逆的破坏性命令:一句话就让模块里所有指纹全部消失,而且没有任何确认步骤,风险不在"谁来调"而在这几行本身
+ * @brief  清空指纹库(0x54),带超时,可在任务里调用
+ * @param  timeout_ms 等应答的总超时(ms)
+ * @return 1 = 成功;0 = 超时 / 帧非法 / 模块报错
+ * @note   原来的 mg200_erase_all() 内部走的是**无超时**的 mg200_rec(),
+ *         放进任务里模块一旦不应答就永久卡死,所以任务里必须用这个版本。
+ * @note   超时给 5000 左右:模块清空整个库比回一条普通命令慢。
+ */
+uint8_t mg200_erase_all_timeout(uint32_t timeout_ms);
 #endif

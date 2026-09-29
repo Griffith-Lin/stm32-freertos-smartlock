@@ -266,6 +266,59 @@ uint8_t check_rec(MG_rec_data rec)
     }
 }
 
+/**
+ * 🟡 L1 架构代码 —— "先清残字节 → 再发 → 再带超时收"这三步的顺序就是它的全部契约:
+ * 少了清残字节,上一帧的尾巴会和这一帧拼起来;少了超时,任务就卡死
+ * @brief  发一条命令并收一帧应答(任务里发命令统一走这里)
+ * @param  cmd/para   命令码 / 参数
+ * @param  rec        输出:收到的应答
+ * @param  timeout_ms 总超时(ms)
+ * @return 1 = 收到了一帧(是否合法看 rec->valid 或 check_rec());0 = 超时
+ * @note   发之前先读空 RX:上一次没收干净的尾巴(校验失败的帧、上电毛刺)会和
+ *         这一次的应答拼在一起,让帧同步从错误的 0x6C 开始(历史 bug)。
+ *         finger.c 里那份 usart6_flush() 做的是同一件事,各留一份是为了不动
+ *         已经调通的认证流程,不在这里做合并。
+ */
+uint8_t mg200_cmd(uint8_t cmd, uint8_t para, MG_rec_data *rec, uint32_t timeout_ms)
+{
+    while (USART_GetFlagStatus(USART6, USART_FLAG_RXNE))
+    {
+        (void)USART_ReceiveData(USART6);
+    }
+
+    mg200_send(cmd, para);
+    return mg200_rec_timeout(rec, timeout_ms);
+}
+
+// 🔴 L0 生死线代码 —— 不可逆:一句话就让模块里所有指纹全部消失,没有任何确认步骤;而且它是任务里唯一能用的清库入口(原来的 mg200_erase_all 会永久卡死)
+uint8_t mg200_erase_all_timeout(uint32_t timeout_ms)
+{
+    MG_rec_data rec;
+
+    if (!mg200_cmd(0x54, 0, &rec, timeout_ms))
+    {
+        printf("MG200:清空指纹库超时,模块没应答\r\n");
+        return 0;
+    }
+
+    if (!check_rec(rec))
+    {
+        return 0; // check_rec() 已经把收到的原始帧打印出来了
+    }
+
+    if (rec.result != 0)
+    {
+        // 帧本身合法,但模块自报失败(比如库里本来就是空的)。
+        // "result == 0 算成功"这个判据和 finger_match() 里 0x71 的用法一致;
+        // 实测要是反过来,只改这一处。
+        printf("MG200:清空指纹库被拒,result=%02X\r\n", rec.result);
+        return 0;
+    }
+
+    printf("MG200:指纹库已清空\r\n");
+    return 1;
+}
+
 // 🟡 L1 架构代码 —— 采满 3 枚才发 0x7F 注册的录入流程(count/put_hint 两个标志的配合);它还不返回,main 里它后面的初始化代码全靠"采满 3 枚"才跑得到
 void mg200_add_finger(void)
 {
