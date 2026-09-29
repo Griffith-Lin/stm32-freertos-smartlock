@@ -55,6 +55,8 @@ virtualFolder:
         - path: api/rfid.h
         - path: api/rc522_task.c
         - path: api/rc522_task.h
+        - path: api/admin.c
+        - path: api/admin.h
       folders: []
     - name: startup
       files:
