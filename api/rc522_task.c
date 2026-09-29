@@ -44,6 +44,20 @@
 #define RC522_RELEASE_MS   200  // 等卡拿开时的轮询周期
 #define RC522_FAIL_MS      800  // "DENIED" 红字停留多久
 
+// ── 管理员模式派下来的活(加卡 / 删卡)──
+#define RC522_LEARN_TIMEOUT_MS  20000  // 333# 加卡:等卡放上来最多等多久
+#define RC522_LEARN_POLL_MS     200    // 加卡等待期间的寻卡周期
+
+//   为什么用标志而不是队列:一次只可能有一件活(管理员模式一次只派一个子模式)。
+//   ★ 跨任务读写:admin(跑在 lock_task 里)写,本任务读。
+//     读的时候要"取出并清零"一起做完,见 rc522_take_request()。
+#define RC522_REQ_NONE   0
+#define RC522_REQ_LEARN  1
+#define RC522_REQ_ERASE  2
+
+static volatile uint8_t s_learn_req;
+static volatile uint8_t s_erase_req;
+
 // 标题行提示语。**必须凑够 8 个字符**:标题行原本是 "PASSWORD"(8 个字符),
 // 而 LCD_Font_Dis_Ascii() 只把每个字符格子里的像素写一遍,新文字短了就盖不掉
 // 旧的尾巴,右边会留残影(见 lock.h 里 lock_lcd_set_title() 的说明)。
@@ -107,6 +121,194 @@ static void rc522_enroll(const uint8_t *uid)
 }
 
 /**
+ * 🟡 L1 架构代码 —— 等卡那一段的计时必须用无符号差值(xTaskGetTickCount 会 49.7 天回绕),超时判断写错的现象是这个任务永远卡在加卡模式里不再刷卡
+ * @brief  加卡模式:等一张卡放上来,把它录成授权卡(管理员模式 333# 派下来的活)
+ * @note   流程和主循环里的常规寻卡一样(寻卡 → 防冲突 → PcdHalt → 存),区别只有两点:
+ *           1) 这里是**有超时的等待**(20 秒),常规寻卡是"这一轮没卡就下一轮";
+ *           2) 认卡那一步直接覆盖,不做比对 —— 用户说了要加卡,那就加。
+ * @note   录完还要等卡拿开:不然手一慢,主循环下一轮就会把同一张卡当成一次
+ *         常规刷卡,顺手把锁开了。
+ * @note   屏幕抢不到就不显示进度,活照干(见 lock.h 的 lock_screen_take)。
+ *         111# 会同时给指纹和刷卡派活,两个都画就会互相盖。
+ * @note   RC522 的 SPI 事务是独占的 —— 这个函数跑起来的时候主循环里那套
+ *         寻卡逻辑是停着的(同一个任务,顺序执行),所以不会有并发访问。
+ */
+static void rc522_learn(void)
+{
+    uint8_t tag_type[2];
+    uint8_t uid[RC522_UID_LEN];
+    uint32_t start = xTaskGetTickCount();
+    uint8_t got_ui;
+
+    got_ui = lock_screen_take(LOCK_SCREEN_RFID);
+
+    if (got_ui)
+    {
+        lock_lcd_big_line(0, "ADD CARD");
+        lock_lcd_big_line(1, "");
+        lock_lcd_big_line(2, "PLACE CARD");
+        lock_lcd_big_line(3, "");
+        lock_lcd_big_line(4, "");
+        lock_lcd_big_line(5, "");
+    }
+
+    /* ── 1) 等卡放上来 ── */
+    for (;;)
+    {
+        if (PcdRequest(PICC_REQALL, tag_type) == MI_OK)
+        {
+            break;
+        }
+
+        if ((xTaskGetTickCount() - start) >= pdMS_TO_TICKS(RC522_LEARN_TIMEOUT_MS))
+        {
+            printf("RFID:加卡超时,%d 秒没等到卡\r\n", RC522_LEARN_TIMEOUT_MS / 1000);
+            if (got_ui)
+            {
+                lock_lcd_big_line(2, "TIMEOUT");
+                vTaskDelay(pdMS_TO_TICKS(RC522_FAIL_MS));
+                lock_screen_give(LOCK_SCREEN_RFID);
+            }
+            return;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(RC522_LEARN_POLL_MS));
+    }
+
+    /* ── 2) 防冲突,拿到 4 字节 UID ── */
+    if (PcdAnticoll(uid) != MI_OK)
+    {
+        printf("RFID:加卡时防冲突失败,重试一次\r\n");
+        if (got_ui)
+        {
+            lock_lcd_big_line(2, "READ FAILED");
+            vTaskDelay(pdMS_TO_TICKS(RC522_FAIL_MS));
+            lock_screen_give(LOCK_SCREEN_RFID);
+        }
+        return;
+    }
+
+    PcdHalt(); // 让卡休眠,免得它每 200ms 就响应一次寻卡
+    rc522_print_uid("LEARN", uid);
+
+    /* ── 3) 存起来。和首次自动录入走的是同一个 rc522_enroll() ── */
+    rc522_enroll(uid);
+    rc522_print_uid("SAVED", uid);
+
+    if (got_ui)
+    {
+        lock_lcd_big_line(2, "CARD SAVED");
+    }
+
+    /* ── 4) 等卡拿开 ── */
+    while (PcdRequest(PICC_REQALL, tag_type) == MI_OK)
+    {
+        vTaskDelay(pdMS_TO_TICKS(RC522_RELEASE_MS));
+    }
+
+    if (got_ui)
+    {
+        vTaskDelay(pdMS_TO_TICKS(RC522_FAIL_MS));
+        lock_screen_give(LOCK_SCREEN_RFID);
+    }
+}
+
+/**
+ * 🔴 L0 生死线代码 —— 删完之后这门锁就回到"第一张刷上来的卡自动成为钥匙"的状态,而且屏幕上只提示一句 CARD DELETED,看不出这层后果
+ * @brief  删除已授权的卡号(管理员模式 111# 派下来的活)
+ * @note   实现上是把 EEPROM 里那 6 个字节整体清零(标志字节写 0 = 没有授权卡),
+ *         一次页写完成 —— 仍然是"标志和数据同一个写周期落盘",不会出现
+ *         "标志已失效、卡号还在"的中间态。
+ * @note   ⚠ **删完之后 s_has_card 归零,主循环会退回"第一张刷上来的卡即录入"**。
+ *         这是 111# 想要的效果(回到出厂状态),但要知道它同时意味着:
+ *         谁在主人之前刷第一张卡,谁就成了新的授权卡。见 rc522_task.h 的说明。
+ */
+static void rc522_erase(void)
+{
+    uint8_t buf[RC522_EEPROM_BYTES];
+    uint8_t got_ui;
+
+    got_ui = lock_screen_take(LOCK_SCREEN_RFID);
+
+    if (got_ui)
+    {
+        lock_lcd_big_line(0, "CLEAR ALL");
+        lock_lcd_big_line(1, "");
+        lock_lcd_big_line(2, "DELETING CARD");
+        lock_lcd_big_line(3, "");
+        lock_lcd_big_line(4, "");
+        lock_lcd_big_line(5, "");
+    }
+
+    memset(buf, 0, sizeof(buf)); // 标志 0 = 没有授权卡
+
+    // ⚠ 这里有一次约 20ms 的 EEPROM 忙等(和 rc522_enroll 同一个代价,见它的说明)
+    if (AT24C04_page_write(RC522_EEPROM_ADDR, buf, RC522_EEPROM_BYTES) != 0)
+    {
+        printf("RFID:删除授权卡号失败(EEPROM 没应答),原卡号仍有效\r\n");
+        if (got_ui)
+        {
+            lock_lcd_big_line(2, "DELETE FAILED");
+        }
+    }
+    else
+    {
+        // 写盘成功了才动 RAM —— 反过来的话会出现"这次不认卡了、重启之后又认了"
+        memset(s_uid, 0, sizeof(s_uid));
+        s_has_card = 0;
+
+        printf("RFID:授权卡号已删除 —— 下一张刷上来的卡会被自动录成新的授权卡\r\n");
+        if (got_ui)
+        {
+            lock_lcd_big_line(2, "CARD DELETED");
+        }
+    }
+
+    if (got_ui)
+    {
+        vTaskDelay(pdMS_TO_TICKS(RC522_FAIL_MS));
+        lock_screen_give(LOCK_SCREEN_RFID);
+    }
+}
+
+/**
+ * 🟡 L1 架构代码 —— "检查 + 清零"必须在同一个临界区里:取出来之后、清零之前对方又置了一次,这次请求就被这次清零吃掉;而这条原子性是"派活不丢"的全部保证
+ * @brief  取出并清掉一个待办的加卡/删卡请求
+ * @return RC522_REQ_NONE / RC522_REQ_LEARN / RC522_REQ_ERASE
+ */
+static uint8_t rc522_take_request(void)
+{
+    uint8_t req = RC522_REQ_NONE;
+
+    taskENTER_CRITICAL();
+    if (s_learn_req)
+    {
+        s_learn_req = 0;
+        req = RC522_REQ_LEARN;
+    }
+    else if (s_erase_req)
+    {
+        s_erase_req = 0;
+        req = RC522_REQ_ERASE;
+    }
+    taskEXIT_CRITICAL();
+
+    return req;
+}
+
+// 🟢 L2 工具代码 —— 纯置位,没有副作用也没有先后要求;"投递意图而非执行"这条分工由调用方遵守
+void rc522_request_learn(void)
+{
+    s_learn_req = 1;
+}
+
+// 🔴 L0 生死线代码 —— 它本身不删任何东西,但触发的那个状态(没有授权卡)正是"下一张卡自动成为钥匙"的入口,删之前想清楚
+void rc522_request_erase(void)
+{
+    s_erase_req = 1;
+}
+
+/**
  * 🟡 L1 架构代码 —— 业务主流程 + 与密码/指纹共用 LCD 的互斥策略(lock_is_busy 预检):
  * "刷卡 → 比对 → 调用 lock_open → 等卡拿开"这几步的顺序和延时是它在正确性上的全部内容,
  * 少一步"等卡拿开"同一张卡就会被反复刷
@@ -124,12 +326,29 @@ static void rc522_task(void *arg)
 {
     uint8_t tag_type[2];
     uint8_t uid[RC522_UID_LEN];
+    uint8_t req;
 
     (void)arg;
 
     for (;;)
     {
         vTaskDelay(pdMS_TO_TICKS(RC522_POLL_MS));
+
+        // ── 管理员模式派下来的活优先 ──
+        //    ⚠ 必须排在下面 lock_is_busy() 那道预检**之前**:加卡和删卡本来就是
+        //      "用密码开完锁之后"发生的,那时候锁多半还在开锁/保持/回锁的过程里,
+        //      排在后面会被那个 continue 一直挡在门外,直到回锁完才轮得到。
+        req = rc522_take_request();
+        if (req == RC522_REQ_LEARN)
+        {
+            rc522_learn();
+            continue;
+        }
+        if (req == RC522_REQ_ERASE)
+        {
+            rc522_erase();
+            continue;
+        }
 
         // 正在开锁/回锁:这轮不刷 —— 刷了也会被 lock_open() 拒掉,还会去抢 LCD
         if (lock_is_busy())
@@ -170,6 +389,11 @@ static void rc522_task(void *arg)
         }
         else if (memcmp(uid, s_uid, RC522_UID_LEN) == 0)
         {
+            // 这一行打印是补上的:原来这里闷头开锁,一句日志都没有 ——
+            // 上板时看到的是"READ 76 B3 0B 25"之后锁就开了、中间什么都不打,
+            // 会让人怀疑是不是"随便什么卡都能开"。白名单没生效的样子和它一模一样。
+            rc522_print_uid("MATCH", uid);
+
             // 走公共开锁流程。它内部还会再判一次忙,这里不用自己防
             lock_open((uint8_t *)RC522_TITLE_OK, GREEN);
         }
