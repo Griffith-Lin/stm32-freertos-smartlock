@@ -1,6 +1,39 @@
 #include "main.h"
-#include "FreeRTOS.h"
-#include "task.h"
+
+#include "FreeRTOS.h"//freertos的核心头文件。  必须第一个包含，其他 FreeRTOS 头文件（task.h、semphr.h 等）都依赖它。它基于 FreeRTOSConfig.h 提供 BaseType_t、TickType_t、pdTRUE/pdMS_TO_TICKS() 这些基础类型和宏。
+#include "task.h"//任务。  xTaskCreate() 创建任务、vTaskDelay() 延时、vTaskStartScheduler() 启动调度器、vTaskDelete() 等。
+#include "semphr.h"//互斥锁。  xSemaphoreCreateMutex()、xSemaphoreTake()、xSemaphoreGive()、xSemaphoreCreateBinary() 等。因为 FreeRTOS 的信号量/互斥量底层是基于队列实现的，所以它内部会 #include "queue.h"——你包含了 semphr.h 就等于也拿到了队列 API（xQueueCreate、xQueueSend、xQueueReceive）。
+
+SemaphoreHandle_t  print_mutex;
+
+/* ==================== 第 5 课:互斥量 ====================
+ * 串口是共享资源。printf 经 fputc 逐字符写 USART1->DR,一旦被高优先级任务抢断,
+ * 会造成两种破坏:
+ *   ① 穿插:两行字符互相切碎
+ *   ② 丢字符(更隐蔽):task A 查完 TXE 被抢走,task B 写完 DR,A 回来又写一次
+ *      → B 那个字节被覆盖丢失(USART 的 DR 一次只存 1 个待发字节)
+ * 所以锁的粒度必须等于"一整行"这个原子单位,锁要包住整个 printf。
+ * 加在 fputc 里挡不住 —— 那样每个字符都是一段合法临界区,B 照样能插进 A 的行中间。
+ */
+#define PRINT_LOCK_ENABLED 1 // 实验开关:0=无锁对照组 1=加锁。两轮之间只改这一个值,其余全不动
+
+/**
+ * @brief 整行原子打印(第 5 课的观测点)
+ * @param s 要打印的字符串(不含换行,本函数自己补 \r\n)
+ * @note 无锁时被优先级 4 的 print_task2 拦腰打断 → 串口出现混行/少字符（观测：不加锁确实出现了混行和少字符的现象）
+ *       加锁后 xSemaphoreTake 拿不到就进 Blocked,不占 CPU,直到持有者 Give
+ */
+static void print_line(const char *s)
+{
+#if PRINT_LOCK_ENABLED
+    xSemaphoreTake(print_mutex, portMAX_DELAY); // 拿不到就睡,不用轮询空耗
+    printf("%s\r\n", s);
+    xSemaphoreGive(print_mutex);                // 必须放!漏掉 = 其它任务拿不到锁，因此永久阻塞在 Take
+#else
+    printf("%s\r\n", s);
+#endif
+}
+
 
 // pa9 u1_tx  pa10 u1_rx
 // cp2102连在串口1上
@@ -51,6 +84,25 @@ void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
         ; /* 任务栈溢出（栈配小了或递归太深） */
 }
 
+
+void vApplicationIdleHook(void) // FreeRTOS 空闲任务钩子函数,由 configUSE_IDLE_HOOK 使能。如果有一个任务不再睡觉，那空闲函数就会饿死
+{
+    // LED_BLUE_toggle();           // 根据led的状态来看进空闲任务的频率
+    print_line("6666666666666666666/r/n");
+}
+
+
+/*
+我没给那两个 Hook 里的 printf 加锁：Hook 触发时系统已经不可信，如果某个任务正握着锁，Hook 再去 Take 就是自己等自己的死锁
+
+
+*/
+
+
+
+
+/*-----------------任务----------------------*/
+
 static void led_task(void *arg)
 {
 
@@ -61,25 +113,37 @@ static void led_task(void *arg)
     }
 }
 
+/**
+ * @brief 低优先级"长工":死循环狂打长行,给高优先级任务制造拦腰打断的机会
+ * @param arg 任务参数(未使用)
+ * @return 无(永不返回)
+ * @note 48 字符 @115200 8N1 ≈ 4.2ms,必然跨过好几个 1ms tick 边界
+ *       故意去掉 vTaskDelay:它一睡觉 CPU 就空了,print_task2 醒来时根本没人在打印,撞不上
+ *       副作用:idle 任务(优先级 0)从此被饿死 —— 正好是"低优先级霸占 CPU 会饿死 idle"的活标本
+ */
 static void print_task1(void *arg)
 {
-
     while (1)
     {
-        printf("111\r\n");
-        vTaskDelay(500);
+        print_line("111111111111111111111111111111111111111111111111");
     }
 }
 
-// 做"每 500ms 精确一次"的闪烁，对比?vTaskDelay?的漂移
+/**
+ * @brief 高优先级"插话者":每 100ms 醒来打断 print_task1 一次
+ * @param arg 任务参数(未使用)
+ * @return 无(永不返回)
+ * @note 优先级 4 > 2,醒来的瞬间立刻抢占(不等下一个 tick),正好砍在 task1 的行中间
+ *       周期从 1000ms 缩到 100ms,让穿插现象每秒稳定出现约 10 次,便于观察
+ */
 static void print_task2(void *arg)
 {
     TickType_t lastWakeTime = xTaskGetTickCount(); // 锚点：进循环前对准一次
 
     while (1)
     {
-        printf("222\r\n");
-        vTaskDelayUntil(&lastWakeTime, 1000); // 固定在"上次 + 500ms"醒，不漂移
+        print_line("222222222222222222222222222222222222222222222222");
+        vTaskDelayUntil(&lastWakeTime, 100); // 固定在"上次 + 100ms"醒，不漂移
     }
 }
 
@@ -100,10 +164,7 @@ static void lcd_task(void *arg)
     }
 }
 
-void vApplicationIdleHook(void) // FreeRTOS 空闲任务钩子函数,由 configUSE_IDLE_HOOK 使能
-{
-    // LED_BLUE_toggle();           // 别忘了分号
-}
+
 
 /**
  * @brief 主函数:外设初始化后创建任务并启动 FreeRTOS 调度器
@@ -139,6 +200,14 @@ int main()
     BaseType_t rc3 = xTaskCreate(print_task2, "print_task2", 128, NULL, 4, NULL); // 优先级最高，防止在打印的时候，被别的任务抢走 CPU，导致打印的时间戳不准确
 
     BaseType_t rc4 = xTaskCreate(lcd_task, "lcd_task", 128, NULL, 2, NULL);
+
+    /* 第 5 课:互斥量必须在 vTaskStartScheduler() 之前创建 —— 它要从 FreeRTOS 堆(heap_4)分配,
+     * 调度器一跑起来,任务可能立刻就用它,来不及了。顺带量一下这把锁花了多少字节。(观测：大概100个字节) */
+    printf("heap before mutex: %u\r\n", (unsigned)xPortGetFreeHeapSize());
+    print_mutex = xSemaphoreCreateMutex();
+    printf("heap after  mutex: %u\r\n", (unsigned)xPortGetFreeHeapSize());
+    if (print_mutex == NULL)
+        printf("mutex create FAILED: heap not enough\r\n"); // 创建失败还去 Take,configASSERT 会直接停住
 
     vTaskStartScheduler();
     /*从堆（heap_4）分配两块内存：
