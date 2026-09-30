@@ -16,6 +16,8 @@
 #define INCLUDE_vTaskDelete           1   /* vTaskDelete: 溢出 hook 里"枪毙"任务 */
 #define INCLUDE_uxTaskPriorityGet     1   /* hook 里打印任务优先级 */
 #define INCLUDE_xTaskDelayUntil       1   /* print_task2 精确周期延时 */
+#define INCLUDE_vTaskSuspend          1   /* vTaskSuspend/vTaskResume:挂起/恢复任务。默认值 0,不开就链接报 Undefined */
+#define INCLUDE_xTaskResumeFromISR    1   /* 中断里恢复任务(默认就是 1,写出来提醒你中断版是独立开关) */
 //以后凡是链接报"Undefined symbol"而头文件里明明有声明，先怀疑是不是没开对应的 INCLUDE_xxx 开关——这是 FreeRTOS 为了省 flash/RAM 故意做的裁剪，编译器抓不到，只有链接器能抓到。
 
 
@@ -49,7 +51,6 @@
 /*---------------- 中断优先级（Cortex-M4 专用）----------------*/
 #define configPRIO_BITS                 4
     /* F4 优先级寄存器 4 位，必须配合 NVIC_PriorityGroup_4（第 4 步改） */
-#define configKERNEL_INTERRUPT_PRIORITY         (255)
 #define configMAX_SYSCALL_INTERRUPT_PRIORITY    ( 0xB0 )   /* 0xB0 = 176，优先级 11，低 4 位必须为 0 */
 
     /* 0xB0 = 176 = 优先级 11。F401 只实现 4 位优先级（0xF0 掩码），
