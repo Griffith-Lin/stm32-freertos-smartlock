@@ -14,6 +14,13 @@
  */
 #define PRINT_LOCK_ENABLED 1 // 实验开关:0=无锁对照组 1=加锁。两轮之间只改这一个值,其余全不动
 
+/* ── SemaphoreHandle_t print_mutex ───────────────────────────────────────
+ * 和 usart1.c 里的 usart_rx_sem 是同一种句柄类型,区别在"哪种信号量":
+ *   usart_rx_sem 是二值信号量 —— 纯通知,谁 Give 都行
+ *   print_mutex  是互斥量     —— 有"主人",只有持有者能 Give
+ * 为什么打印必须用互斥量而不是二值信号量?见下面 xSemaphoreCreateMutex 那段。
+ * 放 static:只有 debug.c 内部拿得到它 → 外部想绕开锁直接 printf 都没门。
+ * 【一句话】一把记名的钥匙 —— 存着它,就等于把串口的所有权攥在手里。 */
 static SemaphoreHandle_t print_mutex = NULL;
 
 /**
@@ -23,6 +30,21 @@ static SemaphoreHandle_t print_mutex = NULL;
  */
 void debug_init(void)
 {
+    /* ── xSemaphoreCreateMutex() ─────────────────────────────────────────
+     * 建一个互斥量,返回句柄;堆不够时返回 NULL。
+     * 它和 xSemaphoreCreateBinary() 长得几乎一样,但多了两条规矩:
+     *   ① **只有持有者能 Give**。别的任务想"帮它放"会被内核拒绝(返回 pdFAIL)。
+     *      二值信号量没这条 —— 谁 Give 都行,所以它适合"通知",不适合"占坑"。
+     *   ② **优先级继承**。低优先级任务握着锁、高优先级任务来抢时,
+     *      内核会临时把持有者的优先级顶到和抢锁者一样高,让它赶紧干完放锁 ——
+     *      为的是防"中间优先级任务"插队导致的**优先级反转**
+     *      (经典事故:1997 年火星探路者号就栽在这上面反复重启,
+     *       最后是远程打补丁打开优先级继承才救回来的)。
+     *      二值信号量完全没有这个机制。
+     * 代价:互斥量比二值信号量重(要多存持有者句柄、多一套继承逻辑);
+     *       而且**绝对不能在中断里 Give** —— queue.c 里有专门的 configASSERT
+     *       拦这个(中断不是任务,没有优先级可以继承,也没法"持有")。
+     * 【一句话】建一把"有记名"的锁:谁锁的谁开,还自带防插队的优先级继承。 */
     print_mutex = xSemaphoreCreateMutex();
 }
 
@@ -32,6 +54,10 @@ void debug_init(void)
  * @note 无锁时被高优先级任务拦腰打断 → 串口出现混行/少字符
  *       【实测】把 PRINT_LOCK_ENABLED 置 0 跑过:确实出现了混行和少字符
  *       加锁后 xSemaphoreTake 拿不到就进 Blocked,不占 CPU,直到持有者 Give
+ *
+ *       这里的 xSemaphoreTake/xSemaphoreGive 和 usart1.c 里是同一对函数,
+ *       只是等的对象不同:那边等"中断发来的通知",这边等"轮到我用串口"。
+ *       【一句话】Take = 排队领钥匙,领到才往下走;Give = 用完还钥匙,顺手叫醒下一个排队的。
  */
 void print_line(const char *s)
 {
