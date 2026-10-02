@@ -4,7 +4,7 @@
 #include "task.h"//任务。  xTaskCreate() 创建任务、vTaskDelay() 延时、vTaskStartScheduler() 启动调度器、vTaskDelete() 等。
 #include "semphr.h"//互斥锁。  xSemaphoreCreateMutex()、xSemaphoreTake()、xSemaphoreGive()、xSemaphoreCreateBinary() 等。因为 FreeRTOS 的信号量/互斥量底层是基于队列实现的，所以它内部会 #include "queue.h"——你包含了 semphr.h 就等于也拿到了队列 API（xQueueCreate、xQueueSend、xQueueReceive）。
 
-SemaphoreHandle_t  print_mutex;
+
 
 /* ==================== 第 5 课:互斥量 ====================
  * 串口是共享资源。printf 经 fputc 逐字符写 USART1->DR,一旦被高优先级任务抢断,
@@ -15,24 +15,11 @@ SemaphoreHandle_t  print_mutex;
  * 所以锁的粒度必须等于"一整行"这个原子单位,锁要包住整个 printf。
  * 加在 fputc 里挡不住 —— 那样每个字符都是一段合法临界区,B 照样能插进 A 的行中间。
  */
-#define PRINT_LOCK_ENABLED 1 // 实验开关:0=无锁对照组 1=加锁。两轮之间只改这一个值,其余全不动
+/* 打印锁的实验开关 PRINT_LOCK_ENABLED 跟着 print_line 一起搬到 api/debug.c 了。
+ * 原来这里也留着一份同名宏 —— 但它已经不起任何作用(改它不会有任何变化,是个陷阱),所以删掉。
+ * 想做"无锁对照组"实验,去 debug.c 改那一个值。 */
 
-/**
- * @brief 整行原子打印(第 5 课的观测点)
- * @param s 要打印的字符串(不含换行,本函数自己补 \r\n)
- * @note 无锁时被优先级 4 的 print_task2 拦腰打断 → 串口出现混行/少字符（观测：不加锁确实出现了混行和少字符的现象）
- *       加锁后 xSemaphoreTake 拿不到就进 Blocked,不占 CPU,直到持有者 Give
- */
-static void print_line(const char *s)
-{
-#if PRINT_LOCK_ENABLED
-    xSemaphoreTake(print_mutex, portMAX_DELAY); // 拿不到就睡,不用轮询空耗
-    printf("%s\r\n", s);
-    xSemaphoreGive(print_mutex);                // 必须放!漏掉 = 其它任务拿不到锁，因此永久阻塞在 Take
-#else
-    printf("%s\r\n", s);
-#endif
-}
+
 
 
 // pa9 u1_tx  pa10 u1_rx
@@ -182,6 +169,7 @@ int main()
     spi1_w25_Config();
     LCD_Init();
     key_tasks_init(); // 建队列 + 创建 key_scan(生产事件)/ key_action(消费) 两个任务
+    usart1_tasks_init();
 
     /*BaseType_t xTaskCreate(
     TaskFunction_t      pxTaskCode,    // ① 任务函数指针
@@ -203,11 +191,15 @@ int main()
 
     /* 第 5 课:互斥量必须在 vTaskStartScheduler() 之前创建 —— 它要从 FreeRTOS 堆(heap_4)分配,
      * 调度器一跑起来,任务可能立刻就用它,来不及了。顺带量一下这把锁花了多少字节。(观测：大概100个字节) */
+    
+    
+    
     printf("heap before mutex: %u\r\n", (unsigned)xPortGetFreeHeapSize());
-    print_mutex = xSemaphoreCreateMutex();
+    debug_init(); // 建全工程唯一的那把打印锁(在 api/debug.c 里)。必须在 vTaskStartScheduler() 之前 —— 它要从 heap_4 分配
     printf("heap after  mutex: %u\r\n", (unsigned)xPortGetFreeHeapSize());
-    if (print_mutex == NULL)
-        printf("mutex create FAILED: heap not enough\r\n"); // 创建失败还去 Take,configASSERT 会直接停住
+    /* 注:原来这里有一句 `if (print_mutex == NULL) ...`。print_mutex 现在是 debug.c 的
+     * static 成员,main.c 根本看不见这个名字,所以那句必须删。想检查"锁建失败了",
+     * 检查点得挪进 debug_init() 里面 —— 或者靠 vApplicationMallocFailedHook(堆不够时它会先喊)。 */
 
     vTaskStartScheduler();
     /*从堆（heap_4）分配两块内存：

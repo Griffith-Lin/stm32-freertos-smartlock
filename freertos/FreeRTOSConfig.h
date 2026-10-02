@@ -51,11 +51,11 @@
 /*---------------- 中断优先级（Cortex-M4 专用）----------------*/
 #define configPRIO_BITS                 4
     /* F4 优先级寄存器 4 位，必须配合 NVIC_PriorityGroup_4（第 4 步改） */
-#define configMAX_SYSCALL_INTERRUPT_PRIORITY    ( 0xB0 )   /* 0xB0 = 176，优先级 11，低 4 位必须为 0 */
+#define configMAX_SYSCALL_INTERRUPT_PRIORITY    ( 0xB0 )   /* 0xB0 = 176，裸机意义上的抢占优先级 11，低 4 位（子优先级）必须为 0 */
 
     /* 0xB0 = 176 = 优先级 11。F401 只实现 4 位优先级（0xF0 掩码），
        此值必须是 16 的倍数，否则 xPortStartScheduler 里的断言会死循环。
-       含义不变：优先级数值 ≥ 11（11~15）的中断才能调 fromISR API */
+       含义不变：裸机意义上的优先级数值 ≥ 11（11~15）的中断才能调 fromISR API */
 
 
 /*---------------- 启动文件符号映射（关键！）----------------*/

@@ -8,7 +8,8 @@
                 "g:\\github\\train2\\user",
                 "g:\\github\\train2\\lib\\inc",
                 "g:\\github\\train2\\lib\\src",
-                "G:\\github\\train2\\freertos\\**"
+                "G:\\github\\train2\\freertos\\**",
+                "${workspaceFolder}/CMSIS"
             ],
             "defines": [
                 "STM32F401xx",

@@ -14,6 +14,7 @@
  */
 #define PRINT_LOCK_ENABLED 1 // 实验开关:0=无锁对照组 1=加锁。两轮之间只改这一个值,其余全不动
 
+//创建互斥锁
 static SemaphoreHandle_t print_mutex = NULL;
 
 /**
@@ -26,6 +27,8 @@ void debug_init(void)
     print_mutex = xSemaphoreCreateMutex();
 }
 
+
+
 /**
  * @brief 整行原子打印:凡是往串口写一行,都应走这个函数
  * @param s 要打印的字符串(不含换行,本函数自己补 \r\n)
@@ -36,7 +39,7 @@ void debug_init(void)
 void print_line(const char *s)
 {
 #if PRINT_LOCK_ENABLED
-    xSemaphoreTake(print_mutex, portMAX_DELAY); // 拿不到就睡,不用轮询空耗
+    xSemaphoreTake(print_mutex, portMAX_DELAY); // 拿不到锁就睡,不用轮询空耗
     printf("%s\r\n", s);
     xSemaphoreGive(print_mutex);                // 必须放!漏掉 = 其它任务永久阻塞在 Take
 #else
