@@ -75,7 +75,7 @@ void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 
 void vApplicationIdleHook(void) // FreeRTOS 空闲任务钩子函数,由 configUSE_IDLE_HOOK 使能。如果有一个任务不再睡觉，那空闲函数就会饿死
 {
-    // LED_BLUE_toggle();           // 根据led的状态来看进空闲任务的频率
+    // LED_GREEN_toggle();          // 根据led的状态来看进空闲任务的频率
 
     /* 为了做软件定时器实验先关掉 —— 空闲任务一有空就打印,115200 会被 6666 刷满,
      * 定时器的 [t100]/[t500] 那几行根本看不见。做完实验想恢复就取消注释。
@@ -95,10 +95,45 @@ void vApplicationIdleHook(void) // FreeRTOS 空闲任务钩子函数,由 configU
 
 /*-----------------任务----------------------*/
 
+//怎么拿出任务的句柄？
+//xTaskCreate的最后一个参数拿出
+
 //挂起流程
 // vTaskSuspend(TaskHandle_t xTaskToSuspend);  // 挂起。传 NULL = 挂起自己
 // vTaskResume(TaskHandle_t xTaskToResume);    // 恢复
 // xTaskResumeFromISR(TaskHandle_t h);         // 中断里恢复,返回 pdTRUE 表示需要切换
+
+//删除任务
+//vTaskDelete(TaskHandle t xTaskToDelete);
+
+//阻塞 = "我在等东西"(等到了、或者时间到了,就自己回来)
+//挂起 = "我被停职了"(没有任何机制会自动让你回来)
+        
+//在什么使用场景下，任务要用vTaskDelay阻塞
+//
+// ① 周期性轮询 —— 任务没有"事件"可等,只能定期醒来看看。
+//    例:api/key.c 的 key_scan_task 每 10ms 扫一次按键。
+// ② 让出 CPU —— 最本质的一条。抢占式调度下,一个不带 delay 的 while(1)
+//    会把同优先级和更低优先级的任务全部饿死(空闲任务永远是第一个受害者)。
+//    所以 while(1) 里必须至少有一个会让出的调用(详解见下面 led_task)。
+// ③ 等硬件缓过劲 —— LCD 复位、外设上电、Flash 写完成。
+//    对比裸机的 TIM10_delay 是 while(...); 死等烧 CPU,这里是真睡;
+//    睡着的这段时间,CPU 可以去跑别的任务。
+// ④ 限流 / 降频 —— 不让某个任务跑太快。print_task1 平时就靠它把打印压到每秒两行。
+// ⑤ 退避重试 —— 查一个还没就绪的东西,失败了就等一会儿再来,别死循环狂查。
+//
+// ⚠️ 什么时候不该用它:有"事件"可等的时候。
+//    该用信号量/队列阻塞等待 —— 例:api/usart1.c 的 usart_rx_task 阻塞在
+//    xSemaphoreTake(usart_rx_sem, portMAX_DELAY),中断 Give 的一瞬间就醒。
+//    换成 vTaskDelay(1) 每毫秒醒来查一次:响应变慢(平均多等半个周期),还白烧 CPU。
+//    要"精确周期"也别用它,用 vTaskDelayUntil(见下面 print_task2)。
+//
+// 顺带记牢:vTaskDelay 期间任务在**阻塞态(Blocked)**,不在挂起态。
+//    它住在"延时链表"上,每个 tick 都有人来检查,时间一到自动搬回就绪链表;
+//    而 vTaskSuspend 住的"挂起链表"**没有任何人会去检查**,只能靠 vTaskResume 来叫。
+//    所以延时一定会醒,挂起忘了 Resume 就是永久消失,还不报错。
+
+
 
 
 static void led_task(void *arg)
@@ -115,7 +150,7 @@ static void led_task(void *arg)
          * 注意它延的是"从调用这一刻起 n 个 tick",不是"每隔 n 个 tick":
          * 中间被抢占、被中断耽误掉的时间会累积成漂移,周期越走越慢。
          * 要精确周期(比如"每秒整一行"),用它下面的 vTaskDelayUntil。
-         * 【一句话】"我先睡 500ms,到点叫我" —— 让出 CPU 又不用自己轮询的标准姿势。 */
+         * 【一句话】"我先睡 500ms（阻塞500ms）,到点叫我" —— 让出 CPU 又不用自己轮询的标准姿势。 */
         vTaskDelay(500);
     }
 }
@@ -133,7 +168,7 @@ static void print_task1(void *arg)
     while (1)
     {
         // print_line("111111111111111111111111111111111111111111111111");
-        
+
 #if !PRINT_STRESS_ENABLED
         vTaskDelay(500); // 平时:每秒两行,把串口让出来
         // 【一句话】和 led_task 里那个是同一个:睡 500ms 再回来,别霸着 CPU 和串口。
