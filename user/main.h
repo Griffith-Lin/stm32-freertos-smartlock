@@ -15,6 +15,7 @@
 #include "dma.h"
 #include "lcd.h"
 #include "debug.h"
+#include "soft_timer.h"
 
 #endif
 

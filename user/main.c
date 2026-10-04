@@ -76,7 +76,11 @@ void vApplicationStackOverflowHook(TaskHandle_t xTask, char *pcTaskName)
 void vApplicationIdleHook(void) // FreeRTOS 空闲任务钩子函数,由 configUSE_IDLE_HOOK 使能。如果有一个任务不再睡觉，那空闲函数就会饿死
 {
     // LED_BLUE_toggle();           // 根据led的状态来看进空闲任务的频率
-    print_line("6666666666666666666/r/n");
+
+    /* 为了做软件定时器实验先关掉 —— 空闲任务一有空就打印,115200 会被 6666 刷满,
+     * 定时器的 [t100]/[t500] 那几行根本看不见。做完实验想恢复就取消注释。
+     * (顺带:这行本身就是"空闲任务被饿死/喂饱"的活体指示器,以后还用得上) */
+    // print_line("6666666666666666666/r/n");
 }
 
 
@@ -128,7 +132,8 @@ static void print_task1(void *arg)
 {
     while (1)
     {
-        print_line("111111111111111111111111111111111111111111111111");
+        // print_line("111111111111111111111111111111111111111111111111");
+        
 #if !PRINT_STRESS_ENABLED
         vTaskDelay(500); // 平时:每秒两行,把串口让出来
         // 【一句话】和 led_task 里那个是同一个:睡 500ms 再回来,别霸着 CPU 和串口。
@@ -155,7 +160,8 @@ static void print_task2(void *arg)
 
     while (1)
     {
-        print_line("222222222222222222222222222222222222222222222222");
+        // print_line("222222222222222222222222222222222222222222222222");
+
         /* ── vTaskDelayUntil(&锚点, 周期) ────────────────────────────────
          * 和 vTaskDelay 的差别就在那个"锚点":
          *   vTaskDelay(1000)         每次"从醒来的这一刻起"再睡 1000 → 误差累积
@@ -248,6 +254,7 @@ int main()
     printf("heap before init: %u\r\n", (unsigned)xPortGetFreeHeapSize());
     debug_init();        // 打印锁:print_line 靠它护住整个串口
     usart1_tasks_init(); // 串口接收信号量 + usart_rx 任务
+    soft_timer_demo_init(); // 两个演示用软件定时器(100ms / 500ms)
     printf("heap after  init: %u\r\n", (unsigned)xPortGetFreeHeapSize());
 
     /* ── vTaskStartScheduler() ───────────────────────────────────────────
