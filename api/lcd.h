@@ -3,7 +3,7 @@
 
 
 #include "stm32f4xx.h"
-#include "io_bit.h"
+#include "bitband.h"
 #include "delay.h"
 #include "w25qxx.h"
 
