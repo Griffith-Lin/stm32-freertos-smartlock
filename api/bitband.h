@@ -13,7 +13,16 @@ STM32F4 的 SRAM/外设区每个 bit 在内存里都有一个独立的 32 位别
 #define BITBAND(addr,bit) (((addr&0xF0000000)+0x2000000)+ ((addr&0xFFFFF)*8+bit)*4)
                                    //别名区基地址         别名区的偏移量
 
-#define MEMADDR(addr,bit)  *(unsigned int *)BITBAND(addr,bit)
+/* volatile 不能省。
+ * 它是在告诉编译器:"这块内存会自己变,别优化我。"
+ * 少了它,编译器有权认为下面这种写法没有可观察的副作用,直接删掉前两次写:
+ *     PBout(8) = 1;
+ *     PBout(8) = 0;
+ *     PBout(8) = 1;
+ * 实测:同一段代码 -O0 下三条 STR 都在,-O2 下只剩一条 —— 而编译器一句警告都不给。
+ * 现象是低优化时一切正常,一开优化时序类代码(软件 SPI、单总线)就随机乱掉。
+ * 现在工程是 optimization: level-0 所以看不出问题,但雷不能埋着。 */
+#define MEMADDR(addr,bit)  *(volatile unsigned int *)BITBAND(addr,bit)
 
 
 //IDR

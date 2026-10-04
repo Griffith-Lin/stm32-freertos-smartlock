@@ -27,18 +27,15 @@ virtualFolder:
         - path: api/delay.c
         - path: api/tim.c
         - path: api/w25qxx.c
-        - path: api/w25qxx.h
         - path: api/spi.c
         - path: api/key.c
-        - path: api/key.h
         - path: api/dma.c
         - path: api/lcd.c
-        - path: api/lcd.h
         - path: api/debug.c
         - path: api/debug.h
         - path: api/soft_timer.c
         - path: api/soft_timer.h
-        - path: api/io_bit.h
+        - path: api/bitband.h
       folders: []
     - name: startup
       files:
