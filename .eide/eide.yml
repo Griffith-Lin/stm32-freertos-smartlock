@@ -36,6 +36,8 @@ virtualFolder:
         - path: api/lcd.h
         - path: api/debug.c
         - path: api/debug.h
+        - path: api/soft_timer.c
+        - path: api/soft_timer.h
         - path: api/io_bit.h
       folders: []
     - name: startup
