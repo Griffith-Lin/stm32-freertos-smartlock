@@ -76,7 +76,7 @@ static void timer_report(const char *name, TickType_t *p_last)
  * @return 无
  * @note 开关打开时故意阻塞 300ms —— 占住的是**守护任务**,不是"我自己的定时器"
  */
-static void timer_100ms_cb(TimerHandle_t xTimer)//timers.h的80行，明确规定，定时器回调应该这样写
+static void timer_100ms_cb(TimerHandle_t xTimer)//timers.h的80行，明确规定，定时器回调应该这样写。（没说必须写static）
 {
     (void)xTimer;//明确表示用不到
     timer_report("t100", &t100_last);
