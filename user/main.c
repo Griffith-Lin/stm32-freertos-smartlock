@@ -90,6 +90,12 @@ void vApplicationIdleHook(void) // FreeRTOS 空闲任务钩子函数,由 configU
 
 /*-----------------任务----------------------*/
 
+//挂起方法
+// void vTaskSuspend(TaskHandle_t xTaskToSuspend)	任务里调用	参数：要挂起的那个任务的句柄
+// void vTaskResume(TaskHandle_t xTaskToResume)	任务里调用	要恢复的那个任务的句柄
+// BaseType_t xTaskResumeFromISR(TaskHandle_t xTaskToResume)	中断里调用	同上,但有返回值
+
+
 static void led_task(void *arg)
 {
 
