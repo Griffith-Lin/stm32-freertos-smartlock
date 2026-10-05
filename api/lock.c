@@ -91,32 +91,31 @@ QueueHandle_t lock_cmd_queue = NULL;
 // ── 锁的状态机 ──
 //    原来"开锁 → 保持 3 秒 → 回锁"是一整块写死在 lock_open() 里的阻塞流程。
 //    好处是直白;坏处是**这 4 秒里 lock_task 完全没法响应任何东西** ——
-//    远程关锁命令只能在队列里干等,等轮到自己时锁早自动回锁了,于是"关锁"
-//    这个动作等于没实现。
-//    拆成状态机之后,lock_task 每 LOCK_TICK_MS 醒一次推进一步,
-//    保持期随时能被关锁命令打断。
+//    按键收不动、云端命令在队列里干等,连挂在它上面的管理员模式窗口都被吃掉
+//    一大半。
+//    拆成状态机之后,lock_task 每 LOCK_TICK_MS 醒一次推进一步,这几件事就都
+//    能插进来了。
 //
-//        开锁 ┌──────────┐ 行程走完  ┌────────┐ 3 秒到 或 收到关锁 ┌──────────┐ 行程走完
-//      ───────►│ OPENING  │──────────►│  OPEN  │──────────────────►│ CLOSING  │──────────► IDLE
-//             └──────────┘           └────────┘                   └──────────┘
+//        开锁 ┌──────────┐ 行程走完  ┌────────┐   3 秒到   ┌──────────┐ 行程走完
+//      ───────►│ OPENING  │──────────►│  OPEN  │──────────►│ CLOSING  │──────────► IDLE
+//             └──────────┘  (刹车)    └────────┘            └──────────┘
+//
+//    (保持期原来还能被云端的远程"关锁"命令提前打断,那条命令后来整个去掉了,
+//     见 lock.h 里 lock_cmd_t 的说明 —— 现在就是老实等满 3 秒。)
 typedef enum
 {
     LOCK_IDLE = 0,      // 锁着,静止
     LOCK_OPENING,       // 电机正在推出锁舌
-    LOCK_OPEN,          // 锁舌已推出,保持中(等自动回锁,或被关锁命令打断)
+    LOCK_OPEN,          // 锁舌已推出,保持中(电机已刹车,等 LOCK_OPEN_MS 到点自动回锁)
     LOCK_CLOSING        // 电机正在收回锁舌
 } lock_state_t;
 
 static lock_state_t s_state = LOCK_IDLE;
 static uint32_t     s_phase_start;      // 进入当前状态的时刻(FreeRTOS tick)
-static uint8_t      s_close_req;        // 1 = 有人要求立刻回锁
-                                        //     **只在 lock_task 里读写**(由
-                                        //     lock_handle_remote 置位、lock_tick 消费),
-                                        //     所以天然不需要临界区。
 
 // 状态机的推进节拍。20ms 的来历:
 //   电机行程是 500ms 级的,20ms 的判定误差(最快提前 20ms 刹车)肉眼看不出来;
-//   而关锁命令最坏要等 20ms 才被响应,也感觉不到。
+//   而云端命令/按键最坏要等 20ms 才被处理,也感觉不到。
 //   再小就没意义了 —— 只是让空闲的 lock_task 多醒几次。
 #define LOCK_TICK_MS    20
 
@@ -477,7 +476,7 @@ uint8_t lock_set_password(const uint8_t *pwd, uint8_t len)
 }
 
 /**
- * 🟡 L1 架构代码 —— 状态机入口的次序就是设计:先写 s_state 再刷 LCD/推电机,避免出现 s_unlocking=1 而 s_state=IDLE 的自相矛盾窗口,并清掉上一轮的 s_close_req
+ * 🟡 L1 架构代码 —— 状态机入口的次序就是设计:先写 s_state 再刷 LCD/推电机,避免出现 s_unlocking=1 而 s_state=IDLE 的自相矛盾窗口
  * @brief  进入"推锁舌"状态:开机界面 + 电机正转
  * @param  title 开锁期间标题行显示的文字
  * @param  color 标题颜色
@@ -492,24 +491,21 @@ static void lock_begin_opening(uint8_t *title, uint16_t color)
     //   瞬间 —— 调试时读到能白查半天(实测确实踩到过)。先写状态就没这窗口。
     s_state       = LOCK_OPENING;
     s_phase_start = xTaskGetTickCount();
-    s_close_req   = 0;      // 上一次的关锁请求不能留到这一次,否则一开就关
 
     lock_lcd_set_title(title, color);
     lock_clear_input();
 
-    // 开锁行程:正转推出去,转多久由 lock_tick() 按 LOCK_MOTOR_OPEN_MS 决定 ——
-    // 万一行程中途收到关锁命令,那边刹车后会直接转 CLOSING。
+    // 开锁行程:正转推出去,转多久由 lock_tick() 按 LOCK_MOTOR_OPEN_MS 决定。
     // (上面刷 LCD 花掉的几毫秒会算进行程里,几百 ms 的尺度上无所谓)
     L9110S_control(MOTOR_FORWARD);
 
-    printf("开锁中,保持 %d 秒后自动回锁(期间收到关锁命令会立刻回锁)\r\n",
-           LOCK_OPEN_MS / 1000);
+    printf("开锁中,保持 %d 秒后自动回锁\r\n", LOCK_OPEN_MS / 1000);
 }
 
 /**
- * 🟡 L1 架构代码 —— 自动回锁和远程关锁共用的唯一出口:先置 CLOSING 再反转电机,维持"s_state 与实际动作一致"这条不变量
+ * 🟡 L1 架构代码 —— 收锁舌的唯一出口:先置 CLOSING 再反转电机,维持"s_state 与实际动作一致"这条不变量
  * @brief  进入"收锁舌"状态:电机反转
- * @note   自动回锁和被远程关锁打断,走的都是这一个出口。
+ * @note   保持期到点自动回锁,走的就是这一个出口。
  */
 static void lock_begin_closing(void)
 {
@@ -517,7 +513,6 @@ static void lock_begin_closing(void)
     // "s_state 和实际动作一致"这条不变量。
     s_state       = LOCK_CLOSING;
     s_phase_start = xTaskGetTickCount();
-    s_close_req   = 0;
 
     L9110S_control(MOTOR_REVERSE);
 
@@ -525,7 +520,7 @@ static void lock_begin_closing(void)
 }
 
 /**
- * 🟡 L1 架构代码 —— 四个状态的转移和刹车时机全在这一个 switch 里;关锁请求在 OPENING(等到刹车点)和 OPEN(立即)的不同落点,就是"保持期可被打断"的实现
+ * 🟡 L1 架构代码 —— 四个状态的转移和刹车时机全在这一个 switch 里:IDLE→OPENING→(刹车)OPEN→(保持 3 秒)→CLOSING→IDLE,每一步的判据都是"距进这个状态过了多久"
  * @brief  推进锁的状态机 —— 由 lock_task 每 LOCK_TICK_MS 调一次
  * @note   电机只在三个"动作中"的状态里被操作,而推进又只发生在 lock_task
  *         这一个任务里,所以 L9110S 的 FORWARD/REVERSE/BRAKE 天然是串行的,
@@ -547,31 +542,16 @@ static void lock_tick(void)
             // 推锁舌 —— 用"开锁"的行程时间
             if ((now - s_phase_start) >= LOCK_MOTOR_OPEN_MS)
             {
-                L9110S_control(MOTOR_BRAKE);
+                L9110S_control(MOTOR_BRAKE);   // 行程走完先刹车,再进保持期
 
-                if (s_close_req)
-                {
-                    // 锁舌刚推到位就收到关锁 —— 直接收回去,不要傻等那 3 秒。
-                    // (这是"立即回锁"在 OPENING 阶段的落点)
-                    printf("开锁过程中收到关锁命令,立即回锁\r\n");
-                    lock_begin_closing();
-                }
-                else
-                {
-                    s_state       = LOCK_OPEN;
-                    s_phase_start = now;
-                }
+                s_state       = LOCK_OPEN;
+                s_phase_start = now;
             }
             break;
 
-        // ── 保持中:到点自动回锁,或被关锁命令提前打断 ──
+        // ── 保持中:电机已经刹车,纯粹等那 3 秒过完 ──
         case LOCK_OPEN:
-            if (s_close_req)
-            {
-                printf("收到关锁命令,立即回锁\r\n");
-                lock_begin_closing();
-            }
-            else if ((now - s_phase_start) >= LOCK_OPEN_MS)
+            if ((now - s_phase_start) >= LOCK_OPEN_MS)
             {
                 lock_begin_closing();
             }
@@ -610,8 +590,8 @@ static void lock_tick(void)
 }
 
 /**
- * 🟡 L1 架构代码 —— 临界区里做 check-and-set 抢 s_unlocking 开锁标志,分开写会让两个来源(指纹/云端)同时推电机;非阻塞返回是远程关锁能及时被响应的前提
- * @brief  开锁 —— 本地开锁来源的公共出口(密码、指纹都走这里)
+ * 🟡 L1 架构代码 —— 临界区里做 check-and-set 抢 s_unlocking 开锁标志,分开写会让两个来源(指纹/云端)同时推电机;非阻塞返回保证 lock_task 不被任何一路开锁来源拖住
+ * @brief  开锁 —— 所有开锁来源的公共出口(密码、指纹、云端都走这里)
  * @param  title 开锁期间标题行显示的 ASCII 文字
  * @param  color 标题颜色
  * @return 1 = 已受理;0 = 已有开锁流程在进行,本次被忽略
@@ -619,8 +599,8 @@ static void lock_tick(void)
  *         整个动作耗时不到 1ms。后面 500ms 行程 + 3 秒保持 + 500ms 回锁,
  *         全部由 lock_task 的 lock_tick() 推进。
  * @note   为什么要拆:原来这里一气睡 4 秒,期间 lock_task 根本回不来收
- *         lock_cmd_queue,远程"关锁"只能在队列里干等到流程自己走完 ——
- *         那这个命令就等于没实现。拆开之后保持期随时能被打断。
+ *         lock_cmd_queue 和按键队列 —— 连管理员模式那 15 秒窗口(挂在
+ *         lock_task 上)都会被吃掉一大半。拆开之后每一拍都能回去收队列。
  * @note   **不能用 L9110S_move()** ——它内部是
  *         `while (GetTim10Tick() - start < ms);` 的忙等,会把 CPU 整整占死
  *         500ms,同优先级和低优先级的任务全部饿死。这和 AT24C04 里
@@ -648,16 +628,55 @@ uint8_t lock_open(uint8_t *title, uint16_t color)
 
 
 /**
+ * 🔴 L0 生死线代码 —— 密码比对的**唯一一份实现**:键盘开锁(lock_verify)和云端开锁(wifi_task)共用这一份;它的返回值直接决定开不开门
+ * @brief  校验一串密码是不是当前的开锁密码
+ * @param  pwd 待校验的密码(ASCII 数字)
+ * @param  len 长度,必须等于 LOCK_PWD_LEN
+ * @return 1 = 对得上;0 = 不对 / 长度不符 / pwd 为空
+ * @note   ⚠ **调用方不许把 pwd 打印出来**:它是开锁凭据,而 USART1 那头接的
+ *         是电脑,日志会被截图外发。要打日志只能说"对/不对",别带内容。
+ * @note   为什么整段包在临界区:比对用的 s_pwd[] 会被 lock_task 里的
+ *         lock_set_password() 改写,而本函数会被 wifi_task 调 —— 6 个字节的
+ *         赋值不是原子的,正好撞上改密码就会读到"改到一半"的密码而误判。
+ *         比对本身只有几十个周期,这点临界区不影响中断响应。
+ * @note   为什么不用 memcmp:pwd 来自外部输入,不保证是字符串,长度由 len
+ *         说了算。这里也故意**不提前 return** —— 差异按位或起来最后判一次,
+ *         时间上不泄露"从第几位开始不对"。6 位定长密码下这是顺手的事。
+ */
+uint8_t lock_check_password(const uint8_t *pwd, uint8_t len)
+{
+    uint8_t i;
+    uint8_t diff = 0;
+
+    if ((pwd == NULL) || (len != LOCK_PWD_LEN))
+    {
+        return 0;
+    }
+
+    taskENTER_CRITICAL();
+
+    for (i = 0; i < LOCK_PWD_LEN; i++)
+    {
+        diff |= (uint8_t)(pwd[i] ^ s_pwd[i]);
+    }
+
+    taskEXIT_CRITICAL();
+
+    return (diff == 0) ? 1 : 0;
+}
+
+/**
  * 🟡 L1 架构代码 —— 业务裁决点:位数不足也算错,先清输入行再闪红字(反了会看着像"密码还在,但已经错了");通过后走 lock_open 公共出口而不自己碰电机
  * @brief  按下 '#' :校验输入的密码
  * @note   位数不对也算错误,一并清空重输并显示红色 ERROR。
  *         先清输入行再弹错误提示 —— 反过来的话,ERROR 停留的 800ms 里
  *         下面那行的 '******' 还挂着,看着像是"密码还在,但已经错了"。
+ * @note   比对本身不在这里做,而是调 lock_check_password() —— 云端那条路
+ *         (wifi_task 收到 {"Password":"..."})也要比对,只有一份实现才不会
+ *         一边改了另一边漏改。
  */
 static void lock_verify(void)
 {
-    uint8_t i;
-
     if (s_input_len != LOCK_PWD_LEN)
     {
         printf("密码错误:只输了 %d 位,需要 %d 位\r\n", s_input_len, LOCK_PWD_LEN);
@@ -666,15 +685,12 @@ static void lock_verify(void)
         return;
     }
 
-    for (i = 0; i < LOCK_PWD_LEN; i++)
+    if (!lock_check_password(s_input, LOCK_PWD_LEN))
     {
-        if (s_input[i] != s_pwd[i])
-        {
-            printf("密码错误\r\n");
-            lock_clear_input();
-            lock_lcd_show_error();
-            return;
-        }
+        printf("密码错误\r\n");
+        lock_clear_input();
+        lock_lcd_show_error();
+        return;
     }
 
     printf("密码正确\r\n");
@@ -728,10 +744,13 @@ static void lock_handle_key(uint8_t key)
 }
 
 /**
- * 🟡 L1 架构代码 —— 云端命令的分流策略:开锁借 lock_open 公共出口(忙则拒并打印原因),关锁只置 s_close_req 让 lock_tick 选刹车时机,绝不直接动电机
+ * 🟡 L1 架构代码 —— 云端命令的唯一落点:借 lock_open 公共出口(忙则拒并打印原因),绝不直接碰电机
  * @brief  处理一条远程锁控命令(MQTT 云端下发)
- * @param  cmd LOCK_CMD_OPEN / LOCK_CMD_CLOSE
- * @note   **只在本任务里跑**,所以 s_close_req 不需要临界区保护。
+ * @param  cmd LOCK_CMD_OPEN
+ * @note   **只在本任务里跑**,所以不需要临界区保护。
+ * @note   密码**不在这里比对** —— wifi_task 解析出 6 位数字之后会先调
+ *         lock_check_password(),对得上才投这条命令过来。这里拿到的已经
+ *         是"验证过的意图"。
  */
 static void lock_handle_remote(lock_cmd_t cmd)
 {
@@ -745,21 +764,6 @@ static void lock_handle_remote(lock_cmd_t cmd)
             lock_open((uint8_t *)"REMOTE  ", GREEN);
             break;
 
-        case LOCK_CMD_CLOSE:
-            if (s_unlocking)
-            {
-                // 锁正开着(或正在开)—— 只置个标志,由 lock_tick() 决定在哪一步
-                // 收手:OPENING 阶段就在刹车点直接转回锁,保持期就立刻转回锁。
-                // 前者避免了"锁舌刚推出去就马上收回来"的机械冲击。
-                s_close_req = 1;
-                printf("远程关锁请求,已通知状态机\r\n");
-            }
-            else
-            {
-                printf("远程关锁请求,但锁本来就是关着的,忽略\r\n");
-            }
-            break;
-
         default:
             printf("不认识的锁控命令 %d,忽略\r\n", (int)cmd);
             break;
@@ -767,7 +771,7 @@ static void lock_handle_remote(lock_cmd_t cmd)
 }
 
 /**
- * 🟡 L1 架构代码 —— 任务与队列结构:远程命令优先→按键次之→两队列都空才推进状态机,20ms 一拍是"命令及时"与"不空转"的折中
+ * 🟡 L1 架构代码 —— 任务与队列结构:远程命令优先→按键次之→**不管走哪条分支、每拍都要推 lock_tick 和 admin_tick**,20ms 一拍是"命令及时"与"不空转"的折中
  * @brief  密码锁任务:消费触摸板按键 + 远程锁控命令,并推进锁的状态机
  * @note   为什么要周期性醒来(而不是像以前那样 portMAX_DELAY 死等)?
  *           1) 有两个队列要收(按键、远程命令),不引入队列集就只能轮询;
@@ -777,6 +781,8 @@ static void lock_handle_remote(lock_cmd_t cmd)
  *          引一套新机制不划算。)
  * @note   优先级 2,和 cy9cm_scan 同级。远程命令只在队列里等最多一个
  *         LOCK_TICK_MS,不会被 wifi 任务拖慢。
+ * @note   ⚠ 两个 tick **每拍都推**,不是"队列都空才推" —— 收完按键的那一拍
+ *         同样要把电机状态机往前推一步。原因见下面循环里那段注释。
  */
 static void lock_task(void *arg)
 {
@@ -786,7 +792,8 @@ static void lock_task(void *arg)
     for (;;)
     {
         // ── 远程命令优先 ──
-        // 它比按键稀少得多,时效性又强(按了"关锁"就该马上关),所以每拍先看它。
+        // 它比按键稀少得多,时效性又强(云端那条命令是用户拿手机点出来的,
+        // 多等一拍就是一拍的延迟),所以每拍先看它。
         if ((lock_cmd_queue != NULL) &&
             (xQueueReceive(lock_cmd_queue, &cmd, 0) == pdPASS))
         {
