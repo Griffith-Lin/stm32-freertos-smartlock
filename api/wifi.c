@@ -32,14 +32,16 @@
 // ── 云端下发消息(订阅到的消息)的行格式 ──
 //    模块主动上报的一行长这样:
 //
-//        +EVENT:MQTT_SUB,attributes/push,14,{"DoorLock":0}
-//        └──── 前缀 ────┘└── topic ────┘└len┘└── payload ──┘
+//        +EVENT:MQTT_SUB,attributes/push,21,{"Password":"123456"}
+//        └──── 前缀 ────┘└── topic ────┘└len┘└──── payload ────┘
 //
 //    ⚠ len 是**平台声明的载荷字节数**,不是我们自己数的 —— 拿它和实际收到的
 //      长度对账,就能发现"行缓冲太小、载荷被截断"这种静默错误。
 //      见 wifi_handle_sub_event()。
+//    ⚠ payload 里装的是开锁密码,回显一律要脱敏(见 wifi_print_masked())。
 #define WIFI_EVT_SUB        "+EVENT:MQTT_SUB,"  // ⚠ 结尾的逗号算在常量里
-#define WIFI_FIELD_DOORLOCK "\"DoorLock\""      // ⚠ 引号一起带上,免得误命中别的前缀
+#define WIFI_FIELD_PWD      "\"Password\""      // ⚠ 引号一起带上,免得误命中别的前缀
+                                                //   (旧字段是 "DoorLock":1/0,已废弃)
 
 // 收行缓冲大小。**payload 必须能整个装下**:被截断的 JSON 有可能还是能解析出
 // 一个(错的)值,那比直接失败更危险。所以长了对不上账就整条丢弃。
@@ -310,6 +312,35 @@ static int wifi_read_line(char *line, uint16_t max, uint32_t timeout_ms)
 
 
 /**
+ * 🟡 L1 架构代码 —— 日志脱敏的唯一出口:云端下发的载荷里装的就是开锁密码,一旦原样进串口就等于把密码写进了会被截图外发的日志,所有回显都得过这一道
+ * @brief  把文本里的数字全部打成 '*' 之后打印(不换行)
+ * @param  text 要打印的文本
+ * @note   为什么要这么干:USART1 那头接的是电脑,调试日志经常被截图或复制
+ *         外发。解析失败的原文更是五花八门(可能截断、可能夹着别的东西),
+ *         与其逐个判断"这段里有没有密码",不如统一"数字一律不打印"。
+ * @note   数字以外的字符(字段名、引号、冒号、大括号)照原样打 —— 那些正是
+ *         排查"云端到底发了个什么结构"要看的东西,而密码本身是纯数字。
+ * @note   先拼进中间缓冲再一次 printf,而不是逐字符 putchar:fputc 每调一次
+ *         就进一次 USART1,拼一下能省好几倍的函数调用。
+ * @note   缓冲大小按 WIFI_LINE_BUF 给:调用方传进来的都是这个尺寸的行缓冲
+ *         (wifi_session / wifi_handle_sub_event 里的 line),绝不会更长。
+ */
+static void wifi_print_masked(const char *text)
+{
+    char    masked[WIFI_LINE_BUF];
+    uint8_t i = 0;
+
+    while ((text[i] != '\0') && (i < (WIFI_LINE_BUF - 1)))
+    {
+        masked[i] = ((text[i] >= '0') && (text[i] <= '9')) ? '*' : text[i];
+        i++;
+    }
+    masked[i] = '\0';
+
+    printf("%s", masked);
+}
+
+/**
  * 🟡 L1 架构代码 —— AT 收发的中心:超时从发命令那一刻算总账、用子串而不是 strcmp 匹配 "ERROR" 以兜住模块真回的 "+ERROR"、非 OK/ERROR 的行存进 s_at_prev 供失败分支解读
  * @brief  发一条 AT 命令,逐行收应答,直到 OK / ERROR
  * @param  cmd        命令正文,不含结尾的 CRLF
@@ -322,6 +353,8 @@ static int wifi_read_line(char *line, uint16_t max, uint32_t timeout_ms)
  *         调试阶段这一步的价值最大 —— 模块到底回了什么,一眼就能看见,
  *         不用拿逻辑分析仪去猜。
  * @note   "+EVENT:xxx" 这类主动上报也会被顺手打印出来,然后继续等 OK。
+ *         ⚠ 但 +EVENT:MQTT_SUB(云端下发)里装着开锁密码,那一行走
+ *         wifi_print_masked() 脱敏 —— 见下面的说明。
  */
 static uint8_t wifi_at_ex(const char *cmd, const char *watch,
                           char *cap, uint16_t cap_size, uint32_t timeout_ms)
@@ -366,7 +399,20 @@ static uint8_t wifi_at_ex(const char *cmd, const char *watch,
 
         if (n > 0)
         {
-            printf("AT< %s\r\n", line);
+            // ⚠ 云端下发的消息会以 +EVENT:MQTT_SUB 的形式**插进任何一条 AT
+            //   命令的等待里**(模块是主动上报的,不挑时候),而那条里装着
+            //   开锁密码,不能原样进日志。别的 AT 应答里没有密码,照原样打
+            //   才好查问题 —— 所以只对这一个前缀脱敏,不是一律打成星号。
+            if (strncmp(line, WIFI_EVT_SUB, sizeof(WIFI_EVT_SUB) - 1) == 0)
+            {
+                printf("AT< ");
+                wifi_print_masked(line);
+                printf("\r\n");
+            }
+            else
+            {
+                printf("AT< %s\r\n", line);
+            }
 
             if ((strcmp(line, "OK") != 0) && (strcmp(line, "ERROR") != 0))
             {
@@ -808,62 +854,90 @@ static uint8_t wifi_mqtt_connect(void)
 
 
 /**
- * 🔴 L0 生死线代码 —— 这是"云端一段字符串"变成"物理开锁动作"的唯一转换点,解析猜错一个字符就是误开锁;所以认不出字段、值不是 0/1、载荷像被截断时都直接丢弃,绝不瞎猜
- * @brief  把云端下发的 JSON 载荷翻译成锁控命令,投给 lock_task
- * @param  payload 形如 {"DoorLock":1} 的文本
+ * 🔴 L0 生死线代码 —— 这是"云端一段字符串"变成"物理开锁动作"的唯一转换点,解析猜错一个字符就是误开锁;所以认不出字段、位数不对、混了非数字、载荷像被截断时都直接丢弃,绝不瞎猜
+ * @brief  把云端下发的 JSON 载荷翻译成开锁意图,投给 lock_task
+ * @param  payload 形如 {"Password":"123456"} 的文本
  * @note   平台约定(定义在 lock.h):
- *             {"DoorLock":1}  → 开锁
- *             {"DoorLock":0}  → 关锁
+ *             {"Password":"123456"}  → 6 位密码和锁密码一致才开锁
+ *         比对走的是 lock_check_password(),**和本地键盘输入同一份实现** ——
+ *         不存在"云端另有一套密码"这回事。管理员用 222# 改了密码,云端跟着
+ *         用新的就行,两边天然一致。
+ * @note   ⚠ **本函数以及整条上报路径都不许原样打印 payload/line**:里面装的
+ *         就是开锁密码,而 USART1 那头接着电脑、日志会被截图外发。所有回显
+ *         一律走 wifi_print_masked() 把数字打成 '*'。
  * @note   为什么不上 cJSON? 载荷就一个字段,为它拉一个 JSON 库进来
  *         (还有 malloc 和栈的代价)不划算。但**这种手写解析只在载荷形状
  *         完全可控时才成立** —— 一旦云端改字段名、载荷里出现嵌套对象,
  *         或者要处理字符串转义,就得换成真正的 JSON 解析器。
- * @note   这里是"尽力而为"的解析:认不出来就打印原文并放弃,**绝不瞎猜**。
+ * @note   这里是"尽力而为"的解析:认不出来就放弃,**绝不瞎猜**。
  *         猜错的代价是误开锁。
  */
 static void wifi_handle_downlink(const char *payload)
 {
     const char *p;
-    const char *q;
+    uint8_t     pwd[LOCK_PWD_LEN];
+    uint8_t     n;
 
-    // 找 "DoorLock"(引号一起找,免得将来云端多个 "DoorLockState"
+    // 找 "Password"(引号一起找,免得将来云端多个 "PasswordExpire"
     // 之类的字段时被误命中)
-    p = strstr(payload, WIFI_FIELD_DOORLOCK);
+    p = strstr(payload, WIFI_FIELD_PWD);
     if (p == NULL)
     {
-        printf("!! 载荷里没有 DoorLock 字段,忽略: %s\r\n", payload);
+        printf("!! 载荷里没有 Password 字段,忽略: ");
+        wifi_print_masked(payload);
+        printf("\r\n");
         return;
     }
 
-    p += sizeof(WIFI_FIELD_DOORLOCK) - 1;   // 跳过 "DoorLock"
+    p += sizeof(WIFI_FIELD_PWD) - 1;    // 跳过 "Password"
 
-    // 跳过冒号和空白:"DoorLock" : 1 这种带空格的写法也要认。
-    // 判空是为了防着载荷被截断成 {"DoorLock" 这种半截样子时越界读。
+    // 跳过冒号和空白:{"Password" : "123456"} 这种带空格的写法也要认。
+    // 判空是为了防着载荷被截断成 {"Password" 这种半截样子时越界读。
     while ((*p == ' ') || (*p == '\t') || (*p == ':'))
     {
         p++;
     }
 
-    // 值可能是数字(1/0),也可能是**带引号的字符串**("1"/"0")——
-    // 有些平台的前端会把开关量当字符串下发。两种都认。
-    q = (*p == '"') ? (p + 1) : p;
-
-    if ((*q != '0') && (*q != '1'))
+    // 值必须是**带引号的字符串**。这里故意不认裸数字 {"Password":123456}:
+    // 数字形式的 012345 连前导零都保不住,与其猜,不如拒掉让对方改对。
+    if (*p != '"')
     {
-        printf("!! DoorLock 的值不是 0/1,忽略: %s\r\n", payload);
+        printf("!! Password 的值不是字符串(少了引号),忽略\r\n");
+        return;
+    }
+    p++;
+
+    // ── 收密码:必须**恰好** LOCK_PWD_LEN 位数字 ──
+    //   逐位查,遇到非数字(包括串提前结束的 '\0')就整条丢弃。
+    for (n = 0; n < LOCK_PWD_LEN; n++)
+    {
+        if ((p[n] < '0') || (p[n] > '9'))
+        {
+            printf("!! Password 不是 %d 位纯数字,忽略\r\n", LOCK_PWD_LEN);
+            return;
+        }
+        pwd[n] = (uint8_t)p[n];
+    }
+
+    // ⚠ 这一句不能省:少了它,{"Password":"12345678"} 会被当成 123456 收下
+    //   —— 多出来的位数被静默无视,反而让"长一位的密码"也开得了门。
+    //   (能安全读到 p[LOCK_PWD_LEN] 是因为上面六位已经保证是数字、不是串尾。)
+    if (p[LOCK_PWD_LEN] != '"')
+    {
+        printf("!! Password 不止 %d 位,忽略\r\n", LOCK_PWD_LEN);
         return;
     }
 
-    if (*q == '1')
+    // ── 比对:和本地键盘输入共用 lock_check_password() ──
+    //   ⚠ 失败分支也不许把 pwd 打出来,只能说"不对"。
+    if (!lock_check_password(pwd, LOCK_PWD_LEN))
     {
-        printf("云端下发:开锁\r\n");
-        lock_post_cmd(LOCK_CMD_OPEN);
+        printf("云端下发:密码不对,拒绝\r\n");
+        return;
     }
-    else
-    {
-        printf("云端下发:关锁\r\n");
-        lock_post_cmd(LOCK_CMD_CLOSE);
-    }
+
+    printf("云端下发:密码正确,开锁\r\n");
+    lock_post_cmd(LOCK_CMD_OPEN);
 }
 
 
@@ -871,7 +945,10 @@ static void wifi_handle_downlink(const char *payload)
  * 🟡 L1 架构代码 —— 只能按前两个逗号切分:payload 是 JSON,天生带逗号,无脑 strtok 会把载荷切碎;还要拿平台声明的 len 和实际收到的长度对账,免得被截断的 JSON 解析出一个错的值
  * @brief  处理一行 +EVENT:MQTT_SUB 上报(云端有消息下来了)
  * @param  line 完整一行,形如:
- *              +EVENT:MQTT_SUB,attributes/push,14,{"DoorLock":0}
+ *              +EVENT:MQTT_SUB,attributes/push,21,{"Password":"123456"}
+ * @note   ⚠ **这条行里装着开锁密码**,所以本函数所有的回显都走
+ *         wifi_print_masked() 把数字打成 '*' —— 报错也不能把原文吐出去。
+ *         详见 wifi_handle_downlink() 的说明。
  * @note   ⚠ **只能按"前两个逗号"切分**。payload 是 JSON,里面天生带逗号
  *         (比如 {"a":1,"b":2}),要是无脑 strtok 把整行按逗号全劈开,
  *         载荷就被切成好几段了。这是这类 AT 模块最常见的翻车点。
@@ -888,6 +965,7 @@ static void wifi_handle_sub_event(const char *line)
     uint32_t    want_len = 0;
     uint32_t    got_len;
     uint32_t    topic_len;
+    uint32_t    i;
 
     // 跳过 "+EVENT:MQTT_SUB,"
     topic = line + (sizeof(WIFI_EVT_SUB) - 1);
@@ -896,7 +974,9 @@ static void wifi_handle_sub_event(const char *line)
     comma = strchr(topic, ',');
     if (comma == NULL)
     {
-        printf("!! 上报格式不对(少了长度字段): %s\r\n", line);
+        printf("!! 上报格式不对(少了长度字段),整行(数字已脱敏): ");
+        wifi_print_masked(line);
+        printf("\r\n");
         return;
     }
     topic_len = (uint32_t)(comma - topic);
@@ -906,7 +986,16 @@ static void wifi_handle_sub_event(const char *line)
     if ((topic_len != strlen(WIFI_TOPIC_SUB)) ||
         (strncmp(topic, WIFI_TOPIC_SUB, topic_len) != 0))
     {
-        printf("!! 收到非本端订阅话题的消息,忽略: %s\r\n", line);
+        // 这个话题名本身不含凭据,照原样打 —— 而且打的必须是**实际收到的**
+        // 那个,打印我们期望的 WIFI_TOPIC_SUB 常量对排查毫无帮助。
+        // (原来打的就是常量,等于每次都在说"我期望的是这个",白打。)
+        // 正文一概不碰:它不属于我们这条链路,里面是什么都不该进日志。
+        printf("!! 收到非本端订阅话题的消息,忽略: 话题=");
+        for (i = 0; i < topic_len; i++)
+        {
+            putchar(topic[i]);
+        }
+        printf("\r\n");
         return;
     }
 
@@ -915,7 +1004,9 @@ static void wifi_handle_sub_event(const char *line)
     comma   = strchr(len_str, ',');
     if (comma == NULL)
     {
-        printf("!! 上报格式不对(少了载荷): %s\r\n", line);
+        printf("!! 上报格式不对(少了载荷),整行(数字已脱敏): ");
+        wifi_print_masked(line);
+        printf("\r\n");
         return;
     }
     payload = comma + 1;
@@ -926,7 +1017,9 @@ static void wifi_handle_sub_event(const char *line)
     {
         if ((*len_str < '0') || (*len_str > '9'))
         {
-            printf("!! 长度字段不是数字,整条丢弃: %s\r\n", line);
+            printf("!! 长度字段不是数字,整条丢弃(数字已脱敏): ");
+            wifi_print_masked(line);
+            printf("\r\n");
             return;
         }
         want_len = (want_len * 10) + (uint32_t)(*len_str - '0');
@@ -934,8 +1027,9 @@ static void wifi_handle_sub_event(const char *line)
 
     got_len = (uint32_t)strlen(payload);
 
-    printf("云端消息:话题=%s,%u 字节,载荷=%s\r\n",
-           WIFI_TOPIC_SUB, got_len, payload);
+    printf("云端消息:话题=%s,%u 字节,载荷=", WIFI_TOPIC_SUB, got_len);
+    wifi_print_masked(payload);
+    printf("\r\n");
 
     if (got_len != want_len)
     {
@@ -980,7 +1074,18 @@ static void wifi_session(void)
         n = wifi_read_line(line, sizeof(line), 500);
         if (n > 0)
         {
-            printf("<< %s\r\n", line);
+            // ⚠ 下面这行回显必须在云端消息上脱敏 —— 那是**唯一**会把开锁密码
+            //   原样送出 USART1 的地方(AT< 那条也有同样的处理)。
+            if (strncmp(line, WIFI_EVT_SUB, sizeof(WIFI_EVT_SUB) - 1) == 0)
+            {
+                printf("<< ");
+                wifi_print_masked(line);
+                printf("\r\n");
+            }
+            else
+            {
+                printf("<< %s\r\n", line);
+            }
 
             // 云端下发的锁控消息 —— 解析成事务投给 lock_task。
             // **这里只投递,不自己动手** —— 见 lock.h 里 lock_cmd_t 的说明。
