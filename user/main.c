@@ -1,9 +1,6 @@
 ﻿#include "main.h"
 #include "app_config.h" // 组件裁剪开关 APP_USE_xxx:main() 里每个组件都被 #if 包着
 
-// 下面按"main() 里真正调到了谁"逐个列出,用不到的不加。
-// (原来靠 main.h 那个万能头一次性带进来 20 个外设头文件,连 w25qxx.h 都带了
-//  两遍,而 main() 根本没直接调过 W25Qxx_*;说明见 main.h 顶部)
 #include "led.h"      // led_Config / LED_BLUE_toggle
 #include "usart1.h"   // usart1_Config(printf 的物理出口)
 #include "tim.h"      // TIM10_Task_Config(1ms 时基,裸机阶段也靠它)
